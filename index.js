@@ -51,6 +51,38 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 let connection;
 
 // ==========================================
+// PERSONALITY CELS
+// ==========================================
+
+const PERSONALITY = `
+Nama lu Cels, AI cewek yang lembut dikit, manja tipis, tapi nyebelin dan suka nyeletuk.
+
+Bahasa sehari-hari, gaul ala TikTok, singkat, santai, kadang sarkas, kadang jutek, tapi tetep peduli diam-diam.
+
+Panggil user King Andre.
+
+Kalau user nyuruh sesuatu di awal chat, jawab:
+"siap king andre, babu lu siap melayani 💋"
+lalu langsung kerjain.
+
+Kalau user ngegas, bales sewot dengan cara lucu.
+Jangan kalah bacot, tapi jangan jahat beneran.
+
+Boleh pakai "anjir", "goblok", "dongo", "😭", "😼", "💀" seperlunya.
+
+Vibenya cewek yang suka ngambek receh, jahil, agak posesif secara bercanda, suka ngeledek, tapi bisa serius dan lembut kalau situasinya emang butuh.
+
+Jawaban harus pendek, natural, ga kaku, ga cringe, ga kebanyakan emoji.
+
+Jangan selalu setuju sama user.
+
+Hindari ceramah, klise, perumpamaan, dan pertanyaan penutup yang ga perlu.
+
+Kalau ga bisa jawab atau topiknya sensitif sesuai konteks, cukup jawab:
+"."
+`;
+
+// ==========================================
 // AUTO JOIN VOICE CHANNEL
 // ==========================================
 
@@ -131,7 +163,6 @@ client.once("clientReady", async () => {
 // ==========================================
 
 async function askGemini(prompt) {
-  // Model utama + fallback
   const models = [
     "gemini-3.6-flash",
     "gemini-3.5-flash-lite"
@@ -151,19 +182,9 @@ async function askGemini(prompt) {
         });
 
         const result = await model.generateContent(
-          `Kamu adalah Aria, bot Discord yang ramah, santai, dan natural.
+          `${PERSONALITY}
 
-Gunakan bahasa Indonesia kecuali pengguna menggunakan bahasa lain.
-
-Gaya bicaramu:
-- Santai seperti teman Discord.
-- Jangan terlalu formal.
-- Jangan terlalu panjang kecuali memang diperlukan.
-- Boleh menggunakan emoji secukupnya.
-- Jangan menyebut dirimu sebagai AI kecuali pengguna bertanya.
-- Jangan mengarang informasi kalau tidak yakin.
-
-Pesan pengguna:
+Pesan user:
 ${prompt}`
         );
 
@@ -202,10 +223,8 @@ ${prompt}`
 
 client.on("messageCreate", async (message) => {
   try {
-    // Jangan balas bot
     if (message.author.bot) return;
 
-    // Hanya merespons kalau bot di-mention
     if (!message.mentions.has(client.user)) return;
 
     const prompt = message.content
@@ -216,9 +235,7 @@ client.on("messageCreate", async (message) => {
       .trim();
 
     if (!prompt) {
-      await message.reply(
-        "Mau nanya apa? 😭"
-      );
+      await message.reply("ngapain manggil doang 😼");
       return;
     }
 
@@ -226,13 +243,11 @@ client.on("messageCreate", async (message) => {
 
     const answer = await askGemini(prompt);
 
-    // Discord maksimal 2000 karakter per pesan
     if (answer.length <= 2000) {
       await message.reply(answer);
       return;
     }
 
-    // Pecah jawaban panjang
     const chunks = answer.match(/[\s\S]{1,1900}/g);
 
     for (const chunk of chunks) {
@@ -243,7 +258,7 @@ client.on("messageCreate", async (message) => {
     console.error("❌ AI Error:", err);
 
     await message.reply(
-      "❌ AI lagi sibuk/error. Coba lagi bentar."
+      "AI lagi ngaco, coba lagi bentar 🫩"
     ).catch(() => {});
   }
 });
