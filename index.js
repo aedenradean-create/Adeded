@@ -10,16 +10,25 @@ const {
   VoiceConnectionStatus,
 } = require("@discordjs/voice");
 
+const OpenAI = require("openai");
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
   ],
 });
 
 const TOKEN = process.env.TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const CHANNEL_ID = process.env.CHANNEL_ID;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+const openai = new OpenAI({
+  apiKey: OPENAI_API_KEY,
+});
 
 let connection;
 
@@ -27,7 +36,6 @@ client.once("clientReady", async () => {
   console.log(`✅ Login sebagai ${client.user.tag}`);
 
   try {
-    // Ambil guild yang sudah dikenali oleh client
     const guild = client.guilds.cache.get(GUILD_ID);
 
     if (!guild) {
@@ -90,6 +98,57 @@ client.once("clientReady", async () => {
   } catch (err) {
     console.error("❌ Gagal masuk VC:");
     console.error(err);
+  }
+});
+
+// AI CHAT
+client.on("messageCreate", async (message) => {
+  try {
+    if (message.author.bot) return;
+
+    // Hanya merespons jika bot di-mention
+    if (!message.mentions.has(client.user)) return;
+
+    if (!OPENAI_API_KEY) {
+      await message.reply(
+        "❌ OPENAI_API_KEY belum dipasang di Railway."
+      );
+      return;
+    }
+
+    // Hilangkan mention bot dari pesan
+    const prompt = message.content
+      .replace(new RegExp(`<@!?${client.user.id}>`, "g"), "")
+      .trim();
+
+    if (!prompt) {
+      await message.reply(
+        "Mau nanya apa? 😭"
+      );
+      return;
+    }
+
+    await message.channel.sendTyping();
+
+    const response = await openai.responses.create({
+      model: "gpt-5-mini",
+      instructions:
+        "Kamu adalah Aria, bot Discord yang ramah, santai, dan bisa ngobrol dalam bahasa Indonesia. Jawab dengan singkat dan natural seperti teman Discord.",
+      input: prompt,
+    });
+
+    const answer =
+      response.output_text?.trim() ||
+      "Gw lagi nggak bisa mikir 😭";
+
+    await message.reply(answer);
+
+  } catch (err) {
+    console.error("❌ AI Error:", err);
+
+    await message.reply(
+      "❌ Ada error waktu gw proses pesan lu."
+    ).catch(() => {});
   }
 });
 
