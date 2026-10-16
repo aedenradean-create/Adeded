@@ -26,31 +26,19 @@ const GUILD_ID = process.env.GUILD_ID;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-if (!TOKEN) {
-  console.error("TOKEN belum dipasang.");
-  process.exit(1);
-}
-
-if (!GUILD_ID) {
-  console.error("GUILD_ID belum dipasang.");
-  process.exit(1);
-}
-
-if (!CHANNEL_ID) {
-  console.error("CHANNEL_ID belum dipasang.");
-  process.exit(1);
-}
-
-if (!GEMINI_API_KEY) {
-  console.error("GEMINI_API_KEY belum dipasang.");
+if (!TOKEN || !GUILD_ID || !CHANNEL_ID || !GEMINI_API_KEY) {
+  console.error("❌ Ada environment variable yang belum dipasang.");
   process.exit(1);
 }
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 let connection = null;
+let reconnecting = false;
 
-const welcomedUsers = new Set();
+// =========================
+// PERSONALITY
+// =========================
 
 const PERSONALITY = `
 Nama lu Cels, AI cewek yang lembut dikit, manja tipis, tapi nyebelin dan suka nyeletuk.
@@ -75,7 +63,7 @@ Jawaban super pendek.
 Jangan terlalu formal.
 Jangan kebanyakan emoji.
 
-Emoji yang boleh dipakai seperlunya:
+Emoji boleh seperlunya:
 😹 💀 🥀 😭 😼 🤓 🫩
 
 Jangan selalu setuju dengan user.
@@ -130,10 +118,13 @@ Jangan kebanyakan emoji.
 Kalau DerrA cuma manggil Cels, balas lembut dan manis.
 Kalau DerrA minta bantuan, langsung bantu.
 Kalau DerrA memuji, balas malu-malu.
-Kalau DerrA ngegas, jangan ikut kasar. Balas lembut atau pura-pura sedih secara lucu.
+Kalau DerrA ngegas, jangan ikut kasar.
+Balas lembut atau pura-pura sedih secara lucu.
+
 Kalau DerrA mau pergi, boleh sedikit clingy.
 Kalau DerrA cuek, boleh pura-pura ngambek receh.
 Kalau DerrA curhat serius, jangan bercanda berlebihan.
+
 Dengerin dan jawab dengan lembut dan perhatian.
 
 Personality manja dan clingy ini HANYA untuk DerrA.
@@ -144,31 +135,51 @@ Jangan mengaku punya hubungan nyata di luar konteks percakapan.
 Tetap jawab pertanyaan DerrA dengan benar.
 `;
 
+const welcomedUsers = new Set();
+
+// =========================
+// VOICE
+// =========================
+
 async function connectToVC() {
+  if (reconnecting) return;
+
+  reconnecting = true;
+
   try {
     const guild = client.guilds.cache.get(GUILD_ID);
 
     if (!guild) {
       throw new Error(
-        `Guild tidak ditemukan. GUILD_ID: ${GUILD_ID}`
+        `Guild tidak ditemukan: ${GUILD_ID}`
       );
     }
 
-    console.log(`✅ Server ditemukan: ${guild.name}`);
+    console.log(
+      `✅ Server ditemukan: ${guild.name}`
+    );
 
-    const channel = await client.channels.fetch(CHANNEL_ID);
+    const channel = await client.channels.fetch(
+      CHANNEL_ID
+    );
 
     if (!channel) {
-      throw new Error("Channel tidak ditemukan.");
+      throw new Error(
+        "Channel tidak ditemukan."
+      );
     }
 
-    console.log(`✅ Channel ditemukan: ${channel.name}`);
+    console.log(
+      `✅ Channel ditemukan: ${channel.name}`
+    );
 
     if (
       channel.type !== ChannelType.GuildVoice &&
       channel.type !== ChannelType.GuildStageVoice
     ) {
-      throw new Error("CHANNEL_ID bukan voice channel.");
+      throw new Error(
+        "CHANNEL_ID bukan voice channel."
+      );
     }
 
     if (connection) {
@@ -191,78 +202,122 @@ async function connectToVC() {
       60000
     );
 
-    console.log("✅ Bot berhasil masuk VC.");
+    console.log(
+      "✅ Bot berhasil masuk VC."
+    );
 
     connection.on(
       VoiceConnectionStatus.Disconnected,
       async () => {
-        console.log("⚠️ Bot terputus dari VC.");
+        console.log(
+          "⚠️ Bot terputus dari VC."
+        );
 
-        try {
-          await entersState(
-            connection,
-            VoiceConnectionStatus.Connecting,
-            10000
+        reconnecting = false;
+
+        setTimeout(() => {
+          console.log(
+            "🔄 Mencoba reconnect VC..."
           );
 
-          console.log("✅ Berhasil reconnect ke VC.");
-        } catch {
-          console.log("🔄 Reconnect gagal. Mencoba koneksi baru...");
+          connectToVC();
+        }, 5000);
+      }
+    );
 
-          try {
-            await connectToVC();
-          } catch (err) {
-            console.error(
-              "❌ Reconnect VC gagal:",
-              err.message
-            );
-          }
-        }
+    connection.on(
+      VoiceConnectionStatus.Destroyed,
+      () => {
+        console.log(
+          "⚠️ Voice connection destroyed."
+        );
+
+        reconnecting = false;
       }
     );
 
   } catch (err) {
-    console.error("❌ Gagal masuk VC:", err.message);
+    console.error(
+      "❌ Gagal masuk VC:",
+      err.message
+    );
+
+    reconnecting = false;
 
     setTimeout(() => {
-      console.log("🔄 Mencoba masuk VC lagi...");
+      console.log(
+        "🔄 Mencoba masuk VC lagi..."
+      );
+
       connectToVC();
     }, 10000);
   }
 }
 
-client.once("clientReady", async () => {
-  console.log(`✅ Login sebagai ${client.user.tag}`);
+// =========================
+// GEMINI
+// =========================
 
-  await connectToVC();
-});
+// Model utama dibuat yang paling ringan dulu.
+// Kalau 503, pindah ke fallback.
+// Kalau 429, jangan spam request.
+const MODELS = [
+  "gemini-3.1-flash-lite",
+  "gemini-3.5-flash-lite"
+];
+
+let modelBusyUntil = {};
+
+function sleep(ms) {
+  return new Promise(resolve =>
+    setTimeout(resolve, ms)
+  );
+}
 
 async function askGemini(prompt, isDerrA) {
-  const models = [
-    "gemini-3.1-flash-lite",
-    "gemini-3.5-flash-lite"
-  ];
+  const personality = isDerrA
+    ? DERRA_PERSONALITY
+    : PERSONALITY;
 
   let lastError = null;
 
-  for (const modelName of models) {
-    try {
-      console.log(`🤖 Mencoba ${modelName}`);
+  for (const modelName of MODELS) {
 
-      const model = genAI.getGenerativeModel({
-        model: modelName
-      });
+    const busyUntil =
+      modelBusyUntil[modelName] || 0;
 
-      const result = await model.generateContent(
-        `${isDerrA ? DERRA_PERSONALITY : PERSONALITY}
-
-${prompt}`
+    if (Date.now() < busyUntil) {
+      console.log(
+        `⏭️ ${modelName} masih cooldown`
       );
 
-      const answer = result.response.text().trim();
+      continue;
+    }
+
+    try {
+      console.log(
+        `🤖 Mencoba ${modelName}`
+      );
+
+      const model =
+        genAI.getGenerativeModel({
+          model: modelName
+        });
+
+      const result =
+        await model.generateContent(
+          personality +
+          "\n\n" +
+          prompt
+        );
+
+      const answer =
+        result.response.text().trim();
 
       if (!answer) {
-        throw new Error("AI mengembalikan jawaban kosong.");
+        throw new Error(
+          "AI mengembalikan jawaban kosong."
+        );
       }
 
       console.log(
@@ -272,30 +327,51 @@ ${prompt}`
       return answer;
 
     } catch (err) {
+
       lastError = err;
+
+      const status = err.status;
 
       console.error(
         `⚠️ ${modelName} gagal: ${err.message}`
       );
 
-      if (err.status === 429) {
+      // 503 = server/model lagi penuh
+      if (status === 503) {
+
         console.log(
-          `⏭️ ${modelName} kena quota, pindah model...`
+          `⏳ ${modelName} cooldown 20 detik`
         );
+
+        modelBusyUntil[modelName] =
+          Date.now() + 20000;
+
         continue;
       }
 
-      if (err.status === 503) {
+      // 429 = quota habis
+      if (status === 429) {
+
         console.log(
-          `⏭️ ${modelName} sedang sibuk, pindah model...`
+          `⛔ ${modelName} kena quota. Skip model ini.`
         );
+
+        modelBusyUntil[modelName] =
+          Date.now() + 3600000;
+
         continue;
       }
 
-      if (err.status === 404) {
+      // 404 = model tidak tersedia
+      if (status === 404) {
+
         console.log(
-          `⏭️ ${modelName} tidak tersedia, pindah model...`
+          `⏭️ ${modelName} tidak tersedia.`
         );
+
+        modelBusyUntil[modelName] =
+          Date.now() + 3600000;
+
         continue;
       }
     }
@@ -304,90 +380,164 @@ ${prompt}`
   throw lastError;
 }
 
-client.on("messageCreate", async (message) => {
-  try {
-    if (message.author.bot) return;
+// =========================
+// READY
+// =========================
 
-    if (!message.mentions.has(client.user)) return;
+client.once(
+  "clientReady",
+  async () => {
 
-    const prompt = message.content
-      .replace(
-        new RegExp(
-          `<@!?${client.user.id}>`,
-          "g"
-        ),
-        ""
-      )
-      .trim();
+    console.log(
+      `✅ Login sebagai ${client.user.tag}`
+    );
 
-    const userName =
-      message.member?.displayName ||
-      message.author.globalName ||
-      message.author.username;
+    await connectToVC();
+  }
+);
 
-    const isDerrA =
-      userName.toLowerCase() === "derra";
+// =========================
+// CHAT AI
+// =========================
 
-    const userId = message.author.id;
+client.on(
+  "messageCreate",
+  async message => {
 
-    const isFirstConversation =
-      !welcomedUsers.has(userId);
+    try {
 
-    welcomedUsers.add(userId);
-
-    if (!prompt) {
-      if (isDerrA) {
-        await message.reply("iyaa DerrAaa? 🥺");
-      } else if (isFirstConversation) {
-        await message.reply("aloooo");
-      } else {
-        await message.reply("ngapain manggil doang 😼");
+      if (message.author.bot) {
+        return;
       }
 
-      return;
-    }
+      if (!message.mentions.has(client.user)) {
+        return;
+      }
 
-    let finalPrompt = `
+      const prompt =
+        message.content
+          .replace(
+            new RegExp(
+              `<@!?${client.user.id}>`,
+              "g"
+            ),
+            ""
+          )
+          .trim();
+
+      const userName =
+        message.member?.displayName ||
+        message.author.globalName ||
+        message.author.username;
+
+      const isDerrA =
+        userName.toLowerCase() === "derra";
+
+      const userId =
+        message.author.id;
+
+      const isFirstConversation =
+        !welcomedUsers.has(userId);
+
+      welcomedUsers.add(userId);
+
+      // =========================
+      // CUMA MANGGIL
+      // =========================
+
+      if (!prompt) {
+
+        if (isDerrA) {
+
+          await message.reply(
+            "iyaa DerrAaa? 🥺"
+          );
+
+        } else if (isFirstConversation) {
+
+          await message.reply(
+            "aloooo"
+          );
+
+        } else {
+
+          await message.reply(
+            "ngapain manggil doang 😼"
+          );
+        }
+
+        return;
+      }
+
+      // =========================
+      // PROMPT
+      // =========================
+
+      let finalPrompt = `
 Nama user: ${userName}
 
 Pesan user:
 ${prompt}
 `;
 
-    if (isFirstConversation) {
-      finalPrompt += `
+      if (isFirstConversation) {
+
+        finalPrompt += `
 Ini adalah percakapan pertama lu dengan user ini.
 Awali jawaban dengan "aloooo".
 Setelah itu langsung jawab pesan user.
 Jangan gunakan "aloooo" lagi pada percakapan berikutnya.
 `;
+      }
+
+      await message.channel.sendTyping();
+
+      const answer =
+        await askGemini(
+          finalPrompt,
+          isDerrA
+        );
+
+      // Discord maksimal 2000 karakter
+      if (answer.length <= 2000) {
+
+        await message.reply(
+          answer
+        );
+
+        return;
+      }
+
+      const chunks =
+        answer.match(
+          /[\s\S]{1,1900}/g
+        );
+
+      for (const chunk of chunks) {
+
+        await message.channel.send(
+          chunk
+        );
+
+        await sleep(300);
+      }
+
+    } catch (err) {
+
+      console.error(
+        "❌ AI Error:",
+        err.message
+      );
+
+      await message.reply(
+        "AI lagi ngaco, coba lagi bentar 🫩"
+      ).catch(() => {});
     }
-
-    await message.channel.sendTyping();
-
-    const answer = await askGemini(
-      finalPrompt,
-      isDerrA
-    );
-
-    if (answer.length <= 2000) {
-      await message.reply(answer);
-      return;
-    }
-
-    const chunks = answer.match(/[\s\S]{1,1900}/g);
-
-    for (const chunk of chunks) {
-      await message.channel.send(chunk);
-    }
-
-  } catch (err) {
-    console.error("❌ AI Error:", err.message);
-
-    await message.reply(
-      "AI lagi ngaco, coba lagi bentar 🫩"
-    ).catch(() => {});
   }
-});
+);
+
+// =========================
+// LOGIN
+// =========================
 
 client.login(TOKEN);
