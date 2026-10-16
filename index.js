@@ -135,7 +135,13 @@ Jangan mengaku punya hubungan nyata di luar konteks percakapan.
 Tetap jawab pertanyaan DerrA dengan benar.
 `;
 
+// =========================
+// STATE
+// =========================
+
 const welcomedUsers = new Set();
+
+let sleepMode = false;
 
 // =========================
 // VOICE
@@ -258,9 +264,6 @@ async function connectToVC() {
 // GEMINI
 // =========================
 
-// Model utama dibuat yang paling ringan dulu.
-// Kalau 503, pindah ke fallback.
-// Kalau 429, jangan spam request.
 const MODELS = [
   "gemini-3.1-flash-lite",
   "gemini-3.5-flash-lite"
@@ -336,7 +339,6 @@ async function askGemini(prompt, isDerrA) {
         `⚠️ ${modelName} gagal: ${err.message}`
       );
 
-      // 503 = server/model lagi penuh
       if (status === 503) {
 
         console.log(
@@ -349,7 +351,6 @@ async function askGemini(prompt, isDerrA) {
         continue;
       }
 
-      // 429 = quota habis
       if (status === 429) {
 
         console.log(
@@ -362,7 +363,6 @@ async function askGemini(prompt, isDerrA) {
         continue;
       }
 
-      // 404 = model tidak tersedia
       if (status === 404) {
 
         console.log(
@@ -410,9 +410,32 @@ client.on(
         return;
       }
 
-      if (!message.mentions.has(client.user)) {
+      // =========================
+      // CEK USER
+      // =========================
+
+      const userName =
+        message.member?.displayName ||
+        message.author.globalName ||
+        message.author.username;
+
+      const isDerrA =
+        userName.toLowerCase() === "derra";
+
+      const isMentioned =
+        message.mentions.has(client.user);
+
+      // =========================
+      // HARUS TAG CELs
+      // =========================
+
+      if (!isMentioned) {
         return;
       }
+
+      // =========================
+      // AMBIL PROMPT
+      // =========================
 
       const prompt =
         message.content
@@ -425,13 +448,34 @@ client.on(
           )
           .trim();
 
-      const userName =
-        message.member?.displayName ||
-        message.author.globalName ||
-        message.author.username;
+      // =========================
+      // MODE TIDUR
+      // =========================
 
-      const isDerrA =
-        userName.toLowerCase() === "derra";
+      if (sleepMode) {
+
+        // Cuma DerrA yang bisa bangunin Cels
+        if (!isDerrA) {
+          console.log(
+            `💤 Mengabaikan tag dari ${userName}`
+          );
+
+          return;
+        }
+
+        // DerrA tag Cels = bangun
+        sleepMode = false;
+
+        await message.reply(
+          "udah bangun 😭"
+        );
+
+        return;
+      }
+
+      // =========================
+      // USER BARU
+      // =========================
 
       const userId =
         message.author.id;
@@ -470,7 +514,29 @@ client.on(
       }
 
       // =========================
-      // PROMPT
+      // PERINTAH TIDUR
+      // =========================
+
+      if (
+        isDerrA &&
+        /\btidur\b/i.test(prompt)
+      ) {
+
+        sleepMode = true;
+
+        await message.reply(
+          "iyaa... Cels tidur dulu 🥀"
+        );
+
+        console.log(
+          "💤 Cels masuk mode tidur. Hanya DerrA yang bisa membangunkan."
+        );
+
+        return;
+      }
+
+      // =========================
+      // PROMPT AI
       // =========================
 
       let finalPrompt = `
@@ -498,7 +564,10 @@ Jangan gunakan "aloooo" lagi pada percakapan berikutnya.
           isDerrA
         );
 
-      // Discord maksimal 2000 karakter
+      // =========================
+      // KIRIM JAWABAN
+      // =========================
+
       if (answer.length <= 2000) {
 
         await message.reply(
