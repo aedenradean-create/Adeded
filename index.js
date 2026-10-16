@@ -30,6 +30,10 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 let connection;
 
+// ================================
+// DISCORD READY + AUTO JOIN VC
+// ================================
+
 client.once("clientReady", async () => {
   console.log(`✅ Login sebagai ${client.user.tag}`);
 
@@ -92,6 +96,7 @@ client.once("clientReady", async () => {
         }
       }
     );
+
   } catch (err) {
     console.error("❌ Gagal masuk VC:");
     console.error(err);
@@ -106,7 +111,7 @@ client.on("messageCreate", async (message) => {
   try {
     if (message.author.bot) return;
 
-    // Bot hanya menjawab jika di-mention
+    // Bot hanya membalas jika di-mention
     if (!message.mentions.has(client.user)) return;
 
     if (!GEMINI_API_KEY) {
@@ -116,6 +121,7 @@ client.on("messageCreate", async (message) => {
       return;
     }
 
+    // Hapus mention bot dari pesan
     const prompt = message.content
       .replace(new RegExp(`<@!?${client.user.id}>`, "g"), "")
       .trim();
@@ -128,13 +134,16 @@ client.on("messageCreate", async (message) => {
     await message.channel.sendTyping();
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.8-flash",
     });
 
     const result = await model.generateContent(
-      `Kamu adalah Aria, bot Discord yang ramah dan santai.
-Jawab dalam bahasa Indonesia kecuali pengguna menggunakan bahasa lain.
-Gaya bicaramu natural seperti teman Discord, jangan terlalu formal.
+      `Kamu adalah Aria, bot Discord yang ramah, santai, dan natural.
+
+Gunakan bahasa Indonesia kecuali pengguna menggunakan bahasa lain.
+Jangan terlalu formal.
+Jawab seperti teman ngobrol di Discord.
+Jangan menyebut bahwa kamu adalah AI kecuali memang ditanya.
 
 Pesan pengguna:
 ${prompt}`
@@ -157,6 +166,7 @@ ${prompt}`
         await message.channel.send(chunk);
       }
     }
+
   } catch (err) {
     console.error("❌ AI Error:", err);
 
@@ -165,5 +175,9 @@ ${prompt}`
     ).catch(() => {});
   }
 });
+
+// ================================
+// LOGIN
+// ================================
 
 client.login(TOKEN);
