@@ -1,3 +1,4 @@
+```js
 const {
   Client,
   GatewayIntentBits,
@@ -35,6 +36,7 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 let connection = null;
 let reconnecting = false;
+let reconnectTimer = null;
 
 // =========================
 // PERSONALITY
@@ -147,8 +149,24 @@ let sleepMode = false;
 // VOICE
 // =========================
 
+function scheduleReconnect(delay = 5000) {
+  if (reconnectTimer) {
+    return;
+  }
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+
+    console.log("🔄 Mencoba reconnect VC...");
+
+    connectToVC();
+  }, delay);
+}
+
 async function connectToVC() {
-  if (reconnecting) return;
+  if (reconnecting) {
+    return;
+  }
 
   reconnecting = true;
 
@@ -188,10 +206,27 @@ async function connectToVC() {
       );
     }
 
+    // Kalau masih punya koneksi aktif, jangan bikin koneksi baru.
     if (connection) {
+      const currentState = connection.state.status;
+
+      if (
+        currentState === VoiceConnectionStatus.Ready ||
+        currentState === VoiceConnectionStatus.Connecting
+      ) {
+        console.log(
+          "ℹ️ Koneksi VC masih aktif."
+        );
+
+        reconnecting = false;
+        return;
+      }
+
       try {
         connection.destroy();
       } catch {}
+      
+      connection = null;
     }
 
     connection = joinVoiceChannel({
@@ -202,16 +237,6 @@ async function connectToVC() {
       selfMute: false
     });
 
-    await entersState(
-      connection,
-      VoiceConnectionStatus.Ready,
-      60000
-    );
-
-    console.log(
-      "✅ Bot berhasil masuk VC."
-    );
-
     connection.on(
       VoiceConnectionStatus.Disconnected,
       async () => {
@@ -221,13 +246,8 @@ async function connectToVC() {
 
         reconnecting = false;
 
-        setTimeout(() => {
-          console.log(
-            "🔄 Mencoba reconnect VC..."
-          );
-
-          connectToVC();
-        }, 5000);
+        // Beri waktu sebentar supaya Discord/network stabil.
+        scheduleReconnect(5000);
       }
     );
 
@@ -239,8 +259,26 @@ async function connectToVC() {
         );
 
         reconnecting = false;
+
+        connection = null;
+
+        // Destroyed bisa terjadi karena koneksi memang sudah mati.
+        // Jangan langsung spam reconnect.
+        scheduleReconnect(5000);
       }
     );
+
+    await entersState(
+      connection,
+      VoiceConnectionStatus.Ready,
+      60000
+    );
+
+    console.log(
+      "✅ Bot berhasil masuk VC."
+    );
+
+    reconnecting = false;
 
   } catch (err) {
     console.error(
@@ -250,13 +288,9 @@ async function connectToVC() {
 
     reconnecting = false;
 
-    setTimeout(() => {
-      console.log(
-        "🔄 Mencoba masuk VC lagi..."
-      );
+    connection = null;
 
-      connectToVC();
-    }, 10000);
+    scheduleReconnect(10000);
   }
 }
 
@@ -269,11 +303,62 @@ const MODELS = [
   "gemini-3.5-flash-lite"
 ];
 
-let modelBusyUntil = {};
+// Cooldown setiap model.
+const modelBusyUntil = {};
+
+// Jumlah kegagalan berturut-turut.
+// Dipakai supaya cooldown bisa meningkat kalau server Gemini
+// sedang benar-benar overload.
+const modelFailures = {};
+
+// Batas cooldown maksimum 5 menit.
+const MAX_MODEL_COOLDOWN = 5 * 60 * 1000;
 
 function sleep(ms) {
   return new Promise(resolve =>
     setTimeout(resolve, ms)
+  );
+}
+
+function getCooldown(modelName) {
+  const failures =
+    modelFailures[modelName] || 1;
+
+  // 20s → 40s → 80s → 160s → 300s
+  const cooldown =
+    Math.min(
+      20000 * Math.pow(2, failures - 1),
+      MAX_MODEL_COOLDOWN
+    );
+
+  return cooldown;
+}
+
+function setModelCooldown(modelName) {
+  const cooldown = getCooldown(modelName);
+
+  modelBusyUntil[modelName] =
+    Date.now() + cooldown;
+
+  modelFailures[modelName] =
+    (modelFailures[modelName] || 0) + 1;
+
+  console.log(
+    `⏳ ${modelName} cooldown ${Math.ceil(cooldown / 1000)} detik`
+  );
+}
+
+function resetModel(modelName) {
+  modelBusyUntil[modelName] = 0;
+  modelFailures[modelName] = 0;
+}
+
+function getStatus(err) {
+  return (
+    err?.status ||
+    err?.response?.status ||
+    err?.cause?.status ||
+    null
   );
 }
 
@@ -283,6 +368,7 @@ async function askGemini(prompt, isDerrA) {
     : PERSONALITY;
 
   let lastError = null;
+  let attemptedModel = false;
 
   for (const modelName of MODELS) {
 
@@ -296,6 +382,8 @@ async function askGemini(prompt, isDerrA) {
 
       continue;
     }
+
+    attemptedModel = true;
 
     try {
       console.log(
@@ -323,6 +411,9 @@ async function askGemini(prompt, isDerrA) {
         );
       }
 
+      // Berhasil = reset failure counter model.
+      resetModel(modelName);
+
       console.log(
         `✅ AI berhasil menggunakan ${modelName}`
       );
@@ -333,35 +424,45 @@ async function askGemini(prompt, isDerrA) {
 
       lastError = err;
 
-      const status = err.status;
+      const status = getStatus(err);
 
       console.error(
         `⚠️ ${modelName} gagal: ${err.message}`
       );
 
+      // =========================
+      // 503 SERVER OVERLOAD
+      // =========================
+
       if (status === 503) {
 
-        console.log(
-          `⏳ ${modelName} cooldown 20 detik`
-        );
-
-        modelBusyUntil[modelName] =
-          Date.now() + 20000;
+        setModelCooldown(modelName);
 
         continue;
       }
+
+      // =========================
+      // 429 QUOTA / RATE LIMIT
+      // =========================
 
       if (status === 429) {
 
         console.log(
-          `⛔ ${modelName} kena quota. Skip model ini.`
+          `⛔ ${modelName} kena quota/rate limit.`
         );
 
+        // Jangan dicoba terus selama 1 jam.
         modelBusyUntil[modelName] =
           Date.now() + 3600000;
 
+        modelFailures[modelName] = 0;
+
         continue;
       }
+
+      // =========================
+      // 404 MODEL TIDAK ADA
+      // =========================
 
       if (status === 404) {
 
@@ -372,12 +473,54 @@ async function askGemini(prompt, isDerrA) {
         modelBusyUntil[modelName] =
           Date.now() + 3600000;
 
+        modelFailures[modelName] = 0;
+
         continue;
       }
+
+      // =========================
+      // ERROR LAIN
+      // =========================
+
+      // Untuk error selain 503/429/404,
+      // jangan retry berkali-kali.
+      break;
     }
   }
 
-  throw lastError;
+  // Semua model sedang cooldown.
+  if (!attemptedModel) {
+    const now = Date.now();
+
+    const availableAt =
+      Math.min(
+        ...MODELS.map(
+          model =>
+            modelBusyUntil[model] || now
+        )
+      );
+
+    const waitSeconds =
+      Math.max(
+        1,
+        Math.ceil(
+          (availableAt - now) / 1000
+        )
+      );
+
+    const error =
+      new Error(
+        `Semua model AI sedang cooldown. Coba lagi dalam ${waitSeconds} detik.`
+      );
+
+    error.code = "ALL_MODELS_COOLDOWN";
+
+    throw error;
+  }
+
+  throw lastError || new Error(
+    "Semua model AI gagal."
+  );
 }
 
 // =========================
@@ -426,7 +569,7 @@ client.on(
         message.mentions.has(client.user);
 
       // =========================
-      // HARUS TAG CELs
+      // HARUS TAG CELS
       // =========================
 
       if (!isMentioned) {
@@ -454,7 +597,6 @@ client.on(
 
       if (sleepMode) {
 
-        // Cuma DerrA yang bisa bangunin Cels
         if (!isDerrA) {
           console.log(
             `💤 Mengabaikan tag dari ${userName}`
@@ -463,7 +605,6 @@ client.on(
           return;
         }
 
-        // DerrA tag Cels = bangun
         sleepMode = false;
 
         await message.reply(
@@ -598,6 +739,17 @@ Jangan gunakan "aloooo" lagi pada percakapan berikutnya.
         err.message
       );
 
+      // Kalau semua model sedang cooldown,
+      // jangan tampilkan error teknis ke user.
+      if (err.code === "ALL_MODELS_COOLDOWN") {
+
+        await message.reply(
+          "AI lagi rame banget 😭 coba lagi bentar."
+        ).catch(() => {});
+
+        return;
+      }
+
       await message.reply(
         "AI lagi ngaco, coba lagi bentar 🫩"
       ).catch(() => {});
@@ -610,3 +762,4 @@ Jangan gunakan "aloooo" lagi pada percakapan berikutnya.
 // =========================
 
 client.login(TOKEN);
+```
