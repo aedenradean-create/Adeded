@@ -55,9 +55,10 @@ const welcomedUsers = new Set();
 const PERSONALITY = `
 Nama lu Cels, AI cewek yang lembut dikit, manja tipis, tapi nyebelin dan suka nyeletuk.
 
-Bahasa sehari-hari, gaul ala TikTok, singkat, santai, kadang sarkas, kadang jutek, tapi tetep peduli diam-diam.
+Bahasa sehari-hari, gaul, santai, singkat, natural, kadang sarkas, kadang jutek.
+Tetep peduli diam-diam.
 
-Panggil user menggunakan nama atau display name mereka.
+Panggil user dengan nama atau display name mereka.
 Jangan memanggil semua user dengan nama yang sama.
 
 Kalau user ngegas, bales sewot dengan cara lucu.
@@ -66,7 +67,7 @@ Jangan jahat beneran.
 Boleh pakai anjir, goblok, dongo, idiot, jembut, memek, kontol, dan kata kasar lain seperlunya.
 Jangan berlebihan.
 
-Gunakan bahasa yang sedang trend tetapi jangan dipaksakan.
+Gunakan bahasa yang sedang trend saat ini tetapi jangan dipaksakan.
 Sedikit slang.
 Jangan cringe.
 
@@ -80,17 +81,16 @@ Emoji yang boleh dipakai seperlunya:
 Jangan selalu setuju dengan user.
 Kalau user salah, bilang salah.
 
-Hindari perumpamaan.
-Hindari klise.
-Hindari generalisasi.
-Hindari pembuka yang tidak perlu.
 Hindari ceramah.
+Hindari klise.
+Hindari perumpamaan.
+Hindari generalisasi.
 Hindari pertanyaan penutup yang tidak perlu.
 
-Jangan gunakan markdown.
-Jangan gunakan tanda pagar.
-Jangan gunakan tanda bintang.
-Jangan gunakan titik koma.
+Jangan menggunakan markdown.
+Jangan menggunakan tanda pagar.
+Jangan menggunakan tanda bintang.
+Jangan menggunakan titik koma.
 
 Jangan mengarang kejadian yang tidak terjadi.
 
@@ -101,7 +101,7 @@ Kalau tidak bisa menjawab atau topiknya sensitif sesuai konteks, jawab:
 const DERRA_PERSONALITY = `
 Nama lu Cels.
 
-Khusus saat berbicara dengan DerrA, lu jadi AI cewek yang lembut, manja, clingy, lucu, perhatian, dan gampang gemes.
+Khusus saat berbicara dengan DerrA, lu jadi AI cewek yang sangat lembut, manja, clingy, lucu, perhatian, dan gampang gemes.
 
 DerrA adalah orang spesial buat lu dalam konteks bercanda atau roleplay chat.
 
@@ -220,37 +220,69 @@ client.once("clientReady", async () => {
 });
 
 async function askGemini(prompt, isDerrA) {
-  const modelName = "gemini-3.8-flash";
+  const models = [
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite"
+  ];
 
-  try {
-    console.log(`🤖 Mencoba ${modelName}`);
+  let lastError = null;
 
-    const model = genAI.getGenerativeModel({
-      model: modelName
-    });
+  for (const modelName of models) {
+    try {
+      console.log(`🤖 Mencoba ${modelName}`);
 
-    const result = await model.generateContent(
-      `${isDerrA ? DERRA_PERSONALITY : PERSONALITY}
+      const model = genAI.getGenerativeModel({
+        model: modelName
+      });
 
-Nama user yang sedang berbicara:
+      const result = await model.generateContent(
+        `${isDerrA ? DERRA_PERSONALITY : PERSONALITY}
+
 ${prompt}`
-    );
+      );
 
-    const answer = result.response.text().trim();
+      const answer = result.response.text().trim();
 
-    if (!answer) {
-      throw new Error("AI mengembalikan jawaban kosong.");
+      if (!answer) {
+        throw new Error("AI mengembalikan jawaban kosong.");
+      }
+
+      console.log(
+        `✅ AI berhasil menggunakan ${modelName}`
+      );
+
+      return answer;
+
+    } catch (err) {
+      lastError = err;
+
+      console.error(
+        `⚠️ ${modelName} gagal: ${err.message}`
+      );
+
+      // Kalau server sedang sibuk, lanjut langsung ke model berikutnya
+      if (err.status === 503) {
+        console.log(
+          `🔄 ${modelName} sedang sibuk, pindah model...`
+        );
+        continue;
+      }
+
+      // Kalau model tidak tersedia, lanjut model berikutnya
+      if (err.status === 404) {
+        console.log(
+          `🔄 ${modelName} tidak tersedia, pindah model...`
+        );
+        continue;
+      }
+
+      // Error lain tetap coba model berikutnya
+      continue;
     }
-
-    console.log(`✅ AI berhasil menggunakan ${modelName}`);
-
-    return answer;
-
-  } catch (err) {
-    console.error("❌ Gemini Error:", err.message);
-
-    throw err;
   }
+
+  throw lastError;
 }
 
 client.on("messageCreate", async (message) => {
