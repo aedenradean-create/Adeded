@@ -48,17 +48,17 @@ if (!GEMINI_API_KEY) {
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-let connection;
+let connection = null;
 
 const welcomedUsers = new Set();
 
 const PERSONALITY = `
 Nama lu Cels, AI cewek yang lembut dikit, manja tipis, tapi nyebelin dan suka nyeletuk.
 
-Bahasa sehari-hari, gaul, santai, singkat, natural, kadang sarkas, kadang jutek.
+Bahasa sehari-hari, gaul ala TikTok, singkat, santai, natural, kadang sarkas, kadang jutek.
 Tetep peduli diam-diam.
 
-Panggil user dengan nama atau display name mereka.
+Panggil user menggunakan nama atau display name mereka.
 Jangan memanggil semua user dengan nama yang sama.
 
 Kalau user ngegas, bales sewot dengan cara lucu.
@@ -144,9 +144,7 @@ Jangan mengaku punya hubungan nyata di luar konteks percakapan.
 Tetap jawab pertanyaan DerrA dengan benar.
 `;
 
-client.once("clientReady", async () => {
-  console.log(`✅ Login sebagai ${client.user.tag}`);
-
+async function connectToVC() {
   try {
     const guild = client.guilds.cache.get(GUILD_ID);
 
@@ -173,6 +171,12 @@ client.once("clientReady", async () => {
       throw new Error("CHANNEL_ID bukan voice channel.");
     }
 
+    if (connection) {
+      try {
+        connection.destroy();
+      } catch {}
+    }
+
     connection = joinVoiceChannel({
       channelId: channel.id,
       guildId: guild.id,
@@ -184,7 +188,7 @@ client.once("clientReady", async () => {
     await entersState(
       connection,
       VoiceConnectionStatus.Ready,
-      30000
+      60000
     );
 
     console.log("✅ Bot berhasil masuk VC.");
@@ -192,38 +196,51 @@ client.once("clientReady", async () => {
     connection.on(
       VoiceConnectionStatus.Disconnected,
       async () => {
-        console.log("🔄 Reconnecting...");
+        console.log("⚠️ Bot terputus dari VC.");
 
         try {
           await entersState(
             connection,
             VoiceConnectionStatus.Connecting,
-            5000
+            10000
           );
 
           console.log("✅ Berhasil reconnect ke VC.");
-        } catch (err) {
-          console.error(
-            "❌ Gagal reconnect. Restart container..."
-          );
+        } catch {
+          console.log("🔄 Reconnect gagal. Mencoba koneksi baru...");
 
-          connection.destroy();
-          process.exit(1);
+          try {
+            await connectToVC();
+          } catch (err) {
+            console.error(
+              "❌ Reconnect VC gagal:",
+              err.message
+            );
+          }
         }
       }
     );
 
   } catch (err) {
-    console.error("❌ Gagal masuk VC:");
-    console.error(err);
+    console.error("❌ Gagal masuk VC:", err.message);
+
+    setTimeout(() => {
+      console.log("🔄 Mencoba masuk VC lagi...");
+      connectToVC();
+    }, 10000);
   }
+}
+
+client.once("clientReady", async () => {
+  console.log(`✅ Login sebagai ${client.user.tag}`);
+
+  await connectToVC();
 });
 
 async function askGemini(prompt, isDerrA) {
   const models = [
-    "gemini-3.6-flash",
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite"
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite"
   ];
 
   let lastError = null;
@@ -261,24 +278,26 @@ ${prompt}`
         `⚠️ ${modelName} gagal: ${err.message}`
       );
 
-      // Kalau server sedang sibuk, lanjut langsung ke model berikutnya
+      if (err.status === 429) {
+        console.log(
+          `⏭️ ${modelName} kena quota, pindah model...`
+        );
+        continue;
+      }
+
       if (err.status === 503) {
         console.log(
-          `🔄 ${modelName} sedang sibuk, pindah model...`
+          `⏭️ ${modelName} sedang sibuk, pindah model...`
         );
         continue;
       }
 
-      // Kalau model tidak tersedia, lanjut model berikutnya
       if (err.status === 404) {
         console.log(
-          `🔄 ${modelName} tidak tersedia, pindah model...`
+          `⏭️ ${modelName} tidak tersedia, pindah model...`
         );
         continue;
       }
-
-      // Error lain tetap coba model berikutnya
-      continue;
     }
   }
 
@@ -363,7 +382,7 @@ Jangan gunakan "aloooo" lagi pada percakapan berikutnya.
     }
 
   } catch (err) {
-    console.error("❌ AI Error:", err);
+    console.error("❌ AI Error:", err.message);
 
     await message.reply(
       "AI lagi ngaco, coba lagi bentar 🫩"
