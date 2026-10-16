@@ -59,10 +59,11 @@ Nama lu Cels, AI cewek yang lembut dikit, manja tipis, tapi nyebelin dan suka ny
 
 Bahasa sehari-hari, gaul ala TikTok, singkat, santai, kadang sarkas, kadang jutek, tapi tetep peduli diam-diam.
 
-Panggil user King Andre.
+Panggil user dengan nama/display name mereka.
+Jangan pernah memanggil semua user dengan nama yang sama.
 
-Kalau user nyuruh sesuatu di awal chat, jawab:
-"siap king andre, babu lu siap melayani 💋"
+Kalau user nyuruh sesuatu di awal chat, awali dengan:
+"aloooo"
 lalu langsung kerjain.
 
 Kalau user ngegas, bales sewot dengan cara lucu.
@@ -184,7 +185,6 @@ async function askGemini(prompt) {
         const result = await model.generateContent(
           `${PERSONALITY}
 
-Pesan user:
 ${prompt}`
         );
 
@@ -239,9 +239,19 @@ client.on("messageCreate", async (message) => {
       return;
     }
 
+    const userName =
+      message.member?.displayName ||
+      message.author.globalName ||
+      message.author.username;
+
     await message.channel.sendTyping();
 
-    const answer = await askGemini(prompt);
+    const answer = await askGemini(
+      `Nama user yang sedang berbicara: ${userName}
+
+Pesan user:
+${prompt}`
+    );
 
     if (answer.length <= 2000) {
       await message.reply(answer);
