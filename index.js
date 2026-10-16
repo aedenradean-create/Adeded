@@ -26,13 +26,33 @@ const GUILD_ID = process.env.GUILD_ID;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
+if (!TOKEN) {
+  console.error("❌ TOKEN belum dipasang.");
+  process.exit(1);
+}
+
+if (!GUILD_ID) {
+  console.error("❌ GUILD_ID belum dipasang.");
+  process.exit(1);
+}
+
+if (!CHANNEL_ID) {
+  console.error("❌ CHANNEL_ID belum dipasang.");
+  process.exit(1);
+}
+
+if (!GEMINI_API_KEY) {
+  console.error("❌ GEMINI_API_KEY belum dipasang.");
+  process.exit(1);
+}
+
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 let connection;
 
-// ================================
+// ==========================================
 // AUTO JOIN VOICE CHANNEL
-// ================================
+// ==========================================
 
 client.once("clientReady", async () => {
   console.log(`✅ Login sebagai ${client.user.tag}`);
@@ -90,7 +110,10 @@ client.once("clientReady", async () => {
             VoiceConnectionStatus.Connecting,
             5000
           );
+
+          console.log("✅ Berhasil reconnect ke VC.");
         } catch {
+          console.log("❌ Gagal reconnect. Restart container...");
           connection.destroy();
           process.exit(1);
         }
@@ -103,17 +126,18 @@ client.once("clientReady", async () => {
   }
 });
 
-// ================================
+// ==========================================
 // GEMINI AI
-// ================================
+// ==========================================
 
 async function askGemini(prompt) {
+  // Model utama + fallback
   const models = [
-    "gemini-3.8-flash",
-    "gemini-3.8-flash-lite"
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite"
   ];
 
-  let lastError;
+  let lastError = null;
 
   for (const modelName of models) {
     for (let attempt = 1; attempt <= 2; attempt++) {
@@ -130,9 +154,14 @@ async function askGemini(prompt) {
           `Kamu adalah Aria, bot Discord yang ramah, santai, dan natural.
 
 Gunakan bahasa Indonesia kecuali pengguna menggunakan bahasa lain.
-Jangan terlalu formal.
-Jawab seperti teman ngobrol di Discord.
-Jangan menyebut bahwa kamu adalah AI kecuali memang ditanya.
+
+Gaya bicaramu:
+- Santai seperti teman Discord.
+- Jangan terlalu formal.
+- Jangan terlalu panjang kecuali memang diperlukan.
+- Boleh menggunakan emoji secukupnya.
+- Jangan menyebut dirimu sebagai AI kecuali pengguna bertanya.
+- Jangan mengarang informasi kalau tidak yakin.
 
 Pesan pengguna:
 ${prompt}`
@@ -141,7 +170,10 @@ ${prompt}`
         const answer = result.response.text().trim();
 
         if (answer) {
-          console.log(`✅ AI berhasil menggunakan ${modelName}`);
+          console.log(
+            `✅ AI berhasil menggunakan ${modelName}`
+          );
+
           return answer;
         }
 
@@ -152,9 +184,10 @@ ${prompt}`
           `⚠️ ${modelName} gagal (attempt ${attempt}): ${err.message}`
         );
 
-        // Tunggu sebelum retry
         if (attempt < 2) {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) =>
+            setTimeout(resolve, 2000)
+          );
         }
       }
     }
@@ -163,30 +196,29 @@ ${prompt}`
   throw lastError;
 }
 
-// ================================
+// ==========================================
 // DISCORD CHAT
-// ================================
+// ==========================================
 
 client.on("messageCreate", async (message) => {
   try {
+    // Jangan balas bot
     if (message.author.bot) return;
 
-    // Hanya jawab kalau bot di-mention
+    // Hanya merespons kalau bot di-mention
     if (!message.mentions.has(client.user)) return;
 
-    if (!GEMINI_API_KEY) {
-      await message.reply(
-        "❌ GEMINI_API_KEY belum dipasang di Railway."
-      );
-      return;
-    }
-
     const prompt = message.content
-      .replace(new RegExp(`<@!?${client.user.id}>`, "g"), "")
+      .replace(
+        new RegExp(`<@!?${client.user.id}>`, "g"),
+        ""
+      )
       .trim();
 
     if (!prompt) {
-      await message.reply("Mau nanya apa? 😭");
+      await message.reply(
+        "Mau nanya apa? 😭"
+      );
       return;
     }
 
@@ -194,15 +226,17 @@ client.on("messageCreate", async (message) => {
 
     const answer = await askGemini(prompt);
 
-    // Discord maksimal 2000 karakter
+    // Discord maksimal 2000 karakter per pesan
     if (answer.length <= 2000) {
       await message.reply(answer);
-    } else {
-      const chunks = answer.match(/[\s\S]{1,1900}/g);
+      return;
+    }
 
-      for (const chunk of chunks) {
-        await message.channel.send(chunk);
-      }
+    // Pecah jawaban panjang
+    const chunks = answer.match(/[\s\S]{1,1900}/g);
+
+    for (const chunk of chunks) {
+      await message.channel.send(chunk);
     }
 
   } catch (err) {
@@ -214,8 +248,8 @@ client.on("messageCreate", async (message) => {
   }
 });
 
-// ================================
-// LOGIN
-// ================================
+// ==========================================
+// LOGIN DISCORD
+// ==========================================
 
 client.login(TOKEN);
