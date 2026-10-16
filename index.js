@@ -27,13 +27,24 @@ client.once("clientReady", async () => {
   console.log(`✅ Login sebagai ${client.user.tag}`);
 
   try {
-    const guild = await client.guilds.fetch(GUILD_ID);
+    // Ambil guild yang sudah dikenali oleh client
+    const guild = client.guilds.cache.get(GUILD_ID);
+
+    if (!guild) {
+      throw new Error(
+        `Guild tidak ditemukan di cache bot. GUILD_ID: ${GUILD_ID}`
+      );
+    }
+
+    console.log(`✅ Server ditemukan: ${guild.name}`);
 
     const channel = await client.channels.fetch(CHANNEL_ID);
 
     if (!channel) {
       throw new Error("Channel tidak ditemukan.");
     }
+
+    console.log(`✅ Channel ditemukan: ${channel.name}`);
 
     if (
       channel.type !== ChannelType.GuildVoice &&
@@ -58,22 +69,26 @@ client.once("clientReady", async () => {
 
     console.log("✅ Bot berhasil masuk VC.");
 
-    connection.on(VoiceConnectionStatus.Disconnected, async () => {
-      console.log("🔄 Reconnecting...");
+    connection.on(
+      VoiceConnectionStatus.Disconnected,
+      async () => {
+        console.log("🔄 Reconnecting...");
 
-      try {
-        await entersState(
-          connection,
-          VoiceConnectionStatus.Connecting,
-          5000
-        );
-      } catch {
-        connection.destroy();
-        process.exit(1);
+        try {
+          await entersState(
+            connection,
+            VoiceConnectionStatus.Connecting,
+            5000
+          );
+        } catch {
+          connection.destroy();
+          process.exit(1);
+        }
       }
-    });
+    );
 
   } catch (err) {
+    console.error("❌ Gagal masuk VC:");
     console.error(err);
   }
 });
