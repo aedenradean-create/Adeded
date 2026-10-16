@@ -31,7 +31,7 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 let connection;
 
 // ================================
-// DISCORD READY + AUTO JOIN VC
+// AUTO JOIN VOICE CHANNEL
 // ================================
 
 client.once("clientReady", async () => {
@@ -104,14 +104,74 @@ client.once("clientReady", async () => {
 });
 
 // ================================
-// AI CHAT GEMINI
+// GEMINI AI
+// ================================
+
+async function askGemini(prompt) {
+  const models = [
+    "gemini-3.8-flash",
+    "gemini-3.8-flash-lite"
+  ];
+
+  let lastError;
+
+  for (const modelName of models) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        console.log(
+          `🤖 Mencoba ${modelName} (attempt ${attempt})`
+        );
+
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+        });
+
+        const result = await model.generateContent(
+          `Kamu adalah Aria, bot Discord yang ramah, santai, dan natural.
+
+Gunakan bahasa Indonesia kecuali pengguna menggunakan bahasa lain.
+Jangan terlalu formal.
+Jawab seperti teman ngobrol di Discord.
+Jangan menyebut bahwa kamu adalah AI kecuali memang ditanya.
+
+Pesan pengguna:
+${prompt}`
+        );
+
+        const answer = result.response.text().trim();
+
+        if (answer) {
+          console.log(`✅ AI berhasil menggunakan ${modelName}`);
+          return answer;
+        }
+
+      } catch (err) {
+        lastError = err;
+
+        console.error(
+          `⚠️ ${modelName} gagal (attempt ${attempt}): ${err.message}`
+        );
+
+        // Tunggu sebelum retry
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+// ================================
+// DISCORD CHAT
 // ================================
 
 client.on("messageCreate", async (message) => {
   try {
     if (message.author.bot) return;
 
-    // Bot hanya membalas jika di-mention
+    // Hanya jawab kalau bot di-mention
     if (!message.mentions.has(client.user)) return;
 
     if (!GEMINI_API_KEY) {
@@ -121,7 +181,6 @@ client.on("messageCreate", async (message) => {
       return;
     }
 
-    // Hapus mention bot dari pesan
     const prompt = message.content
       .replace(new RegExp(`<@!?${client.user.id}>`, "g"), "")
       .trim();
@@ -133,30 +192,9 @@ client.on("messageCreate", async (message) => {
 
     await message.channel.sendTyping();
 
-    const model = genAI.getGenerativeModel({
-      model: "gemini-3.8-flash",
-    });
+    const answer = await askGemini(prompt);
 
-    const result = await model.generateContent(
-      `Kamu adalah Aria, bot Discord yang ramah, santai, dan natural.
-
-Gunakan bahasa Indonesia kecuali pengguna menggunakan bahasa lain.
-Jangan terlalu formal.
-Jawab seperti teman ngobrol di Discord.
-Jangan menyebut bahwa kamu adalah AI kecuali memang ditanya.
-
-Pesan pengguna:
-${prompt}`
-    );
-
-    const answer = result.response.text().trim();
-
-    if (!answer) {
-      await message.reply("Gw lagi nggak bisa mikir 😭");
-      return;
-    }
-
-    // Discord maksimal 2000 karakter per pesan
+    // Discord maksimal 2000 karakter
     if (answer.length <= 2000) {
       await message.reply(answer);
     } else {
@@ -171,7 +209,7 @@ ${prompt}`
     console.error("❌ AI Error:", err);
 
     await message.reply(
-      "❌ AI-nya lagi error. Cek log Railway."
+      "❌ AI lagi sibuk/error. Coba lagi bentar."
     ).catch(() => {});
   }
 });
