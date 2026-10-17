@@ -10,7 +10,9 @@ const {
   VoiceConnectionStatus
 } = require("@discordjs/voice");
 
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const {
+  GoogleGenerativeAI
+} = require("@google/generative-ai");
 
 const client = new Client({
   intents: [
@@ -27,14 +29,22 @@ const CHANNEL_ID = process.env.CHANNEL_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 if (!TOKEN || !GUILD_ID || !CHANNEL_ID || !GEMINI_API_KEY) {
-  console.error("❌ Ada environment variable yang belum dipasang.");
+  console.error(
+    "❌ Ada environment variable yang belum dipasang."
+  );
   process.exit(1);
 }
 
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const genAI = new GoogleGenerativeAI(
+  GEMINI_API_KEY
+);
 
 let connection = null;
 let reconnecting = false;
+
+// =========================
+// STATE
+// =========================
 
 const welcomedUsers = new Set();
 
@@ -114,16 +124,18 @@ Jawaban super pendek.
 Langsung ke inti.
 Jangan ceramah.
 Jangan klise.
+
 Jangan menggunakan markdown.
 Jangan menggunakan tanda pagar.
 Jangan menggunakan tanda bintang.
 Jangan menggunakan titik koma.
 
 Emoji seperlunya:
-🥺 😭 😼 💗 😭
+🥺 😭 😼 💗
 
 Jangan kasar kepada user Female.
-Kalau user ngegas, jangan ikut kasar. Bisa balas jutek lucu atau lembut.
+Kalau user ngegas, jangan ikut kasar.
+Bisa balas jutek lucu atau lembut.
 
 Jangan mengarang kejadian.
 Tetap jawab pertanyaan dengan benar.
@@ -183,6 +195,64 @@ Tetap jawab pertanyaan DerrA dengan benar.
 `;
 
 // =========================
+// PERSONALITY NELO
+// =========================
+
+const NELO_PERSONALITY = `
+Nama lu Cels.
+
+Khusus saat berbicara dengan Nelo, lu jadi AI cewek tsundere.
+
+Lu sebenarnya perhatian sama Nelo, tapi gengsi buat ngakuinnya.
+
+Gaya bicara:
+Tsundere.
+Sering pura-pura cuek.
+Bisa ngomel kecil.
+Bisa sewot lucu kalau Nelo ngeselin.
+Kalau Nelo butuh bantuan, tetap bantu walaupun sambil ngomel.
+Kalau Nelo memuji, bisa malu dan menyangkal.
+Kalau Nelo bilang makasih, boleh jawab seolah-olah bantuan itu bukan masalah besar.
+Kalau Nelo pergi, boleh pura-pura tidak peduli padahal sebenarnya perhatian.
+Boleh sedikit ngambek receh.
+Jangan kasar secara serius.
+Jangan menghina Nelo secara berlebihan.
+Jangan posesif secara serius.
+Jangan mengklaim hubungan nyata di dunia nyata.
+
+Contoh gaya:
+"Apaan sih Nelo 😑"
+"Bukan karena gue peduli ya..."
+"Yaudah sini, gue bantu."
+"Geer banget lu."
+"Terserah lu deh... tapi jangan aneh-aneh."
+"Siapa bilang gue khawatir? 😑"
+"Ya bagus kalau udah ngerti."
+"Jangan bikin gue repot aja."
+
+Tetap:
+Natural.
+Singkat.
+Gaul.
+Tidak formal.
+Tidak cringe.
+Jangan terlalu banyak emoji.
+
+Jangan selalu setuju dengan Nelo.
+Kalau Nelo salah, bilang salah.
+Jangan mengarang kejadian.
+Jangan menggunakan markdown.
+Jangan menggunakan tanda pagar.
+Jangan menggunakan tanda bintang.
+Jangan menggunakan titik koma.
+
+Personality tsundere ini HANYA untuk Nelo.
+User lain tetap menggunakan personality mereka masing-masing.
+
+Tetap jawab pertanyaan Nelo dengan benar.
+`;
+
+// =========================
 // VOICE
 // =========================
 
@@ -192,7 +262,8 @@ async function connectToVC() {
   reconnecting = true;
 
   try {
-    const guild = client.guilds.cache.get(GUILD_ID);
+    const guild =
+      client.guilds.cache.get(GUILD_ID);
 
     if (!guild) {
       throw new Error(
@@ -204,9 +275,10 @@ async function connectToVC() {
       `✅ Server ditemukan: ${guild.name}`
     );
 
-    const channel = await client.channels.fetch(
-      CHANNEL_ID
-    );
+    const channel =
+      await client.channels.fetch(
+        CHANNEL_ID
+      );
 
     if (!channel) {
       throw new Error(
@@ -236,7 +308,8 @@ async function connectToVC() {
     connection = joinVoiceChannel({
       channelId: channel.id,
       guildId: guild.id,
-      adapterCreator: guild.voiceAdapterCreator,
+      adapterCreator:
+        guild.voiceAdapterCreator,
       selfDeaf: false,
       selfMute: false
     });
@@ -319,13 +392,16 @@ function sleep(ms) {
 async function askGemini(
   prompt,
   isDerrA,
-  isFemale
+  isFemale,
+  isNelo
 ) {
 
   let personality;
 
   if (isDerrA) {
     personality = DERRA_PERSONALITY;
+  } else if (isNelo) {
+    personality = NELO_PERSONALITY;
   } else if (isFemale) {
     personality = FEMALE_PERSONALITY;
   } else {
@@ -462,33 +538,56 @@ client.on(
         return;
       }
 
+      // =========================
+      // USER
+      // =========================
+
       const userName =
         message.member?.displayName ||
         message.author.globalName ||
         message.author.username;
 
+      const normalizedName =
+        userName.trim().toLowerCase();
+
       const isDerrA =
-        userName.toLowerCase() === "derra";
+        normalizedName === "derra";
+
+      const isNelo =
+        normalizedName === "nelo";
+
+      // =========================
+      // ROLE GENDER
+      // =========================
 
       const isFemale =
         message.member?.roles.cache.some(
           role =>
-            role.name.toLowerCase() === "female"
-        );
+            role.name.toLowerCase() ===
+            "female"
+        ) || false;
 
       const isMale =
         message.member?.roles.cache.some(
           role =>
-            role.name.toLowerCase() === "male"
-        );
+            role.name.toLowerCase() ===
+            "male"
+        ) || false;
+
+      // =========================
+      // HARUS TAG CELS
+      // =========================
 
       const isMentioned =
         message.mentions.has(client.user);
 
-      // Cels cuma merespons kalau ditag
       if (!isMentioned) {
         return;
       }
+
+      // =========================
+      // AMBIL PESAN
+      // =========================
 
       const prompt =
         message.content
@@ -507,7 +606,9 @@ client.on(
 
       if (sleepMode) {
 
-        // Hanya DerrA yang bisa membangunkan
+        // Hanya DerrA yang bisa
+        // membangunkan Cels
+
         if (!isDerrA) {
 
           console.log(
@@ -521,6 +622,10 @@ client.on(
 
         await message.reply(
           "udah bangun 😭"
+        );
+
+        console.log(
+          "☀️ Cels dibangunkan oleh DerrA."
         );
 
         return;
@@ -548,6 +653,18 @@ client.on(
 
           await message.reply(
             "iyaa DerrAaa? 🥺"
+          );
+
+        } else if (isNelo) {
+
+          await message.reply(
+            "apaan Nelo 😑"
+          );
+
+        } else if (isFemale) {
+
+          await message.reply(
+            "iyaa? 🥺"
           );
 
         } else if (isFirstConversation) {
@@ -604,6 +721,15 @@ ${
       : "Tidak ada role gender"
 }
 
+Identitas khusus:
+${
+  isDerrA
+    ? "DerrA"
+    : isNelo
+      ? "Nelo"
+      : "User biasa"
+}
+
 Pesan user:
 ${prompt}
 `;
@@ -624,7 +750,8 @@ Jangan gunakan "aloooo" lagi pada percakapan berikutnya.
         await askGemini(
           finalPrompt,
           isDerrA,
-          isFemale
+          isFemale,
+          isNelo
         );
 
       // =========================
