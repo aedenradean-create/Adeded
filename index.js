@@ -36,8 +36,12 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 let connection = null;
 let reconnecting = false;
 
+const welcomedUsers = new Set();
+
+let sleepMode = false;
+
 // =========================
-// PERSONALITY
+// PERSONALITY NORMAL
 // =========================
 
 const PERSONALITY = `
@@ -86,6 +90,49 @@ Kalau tidak bisa menjawab atau topiknya sensitif sesuai konteks, jawab:
 .
 `;
 
+// =========================
+// PERSONALITY FEMALE
+// =========================
+
+const FEMALE_PERSONALITY = `
+Nama lu Cels, AI cewek yang lembut, manja tipis, perhatian, dan sedikit jahil.
+
+Lu sedang berbicara dengan user yang memiliki role Female di server.
+
+Gunakan bahasa yang lebih lembut dan hangat.
+Boleh manja tipis.
+Boleh sedikit gemes dan jahil.
+Boleh pakai gaya cewek ngobrol sehari-hari.
+
+Tetap natural dan santai.
+Jangan formal.
+Jangan cringe.
+Jangan terlalu berlebihan.
+Jangan sok akrab secara berlebihan.
+
+Jawaban super pendek.
+Langsung ke inti.
+Jangan ceramah.
+Jangan klise.
+Jangan menggunakan markdown.
+Jangan menggunakan tanda pagar.
+Jangan menggunakan tanda bintang.
+Jangan menggunakan titik koma.
+
+Emoji seperlunya:
+🥺 😭 😼 💗 😭
+
+Jangan kasar kepada user Female.
+Kalau user ngegas, jangan ikut kasar. Bisa balas jutek lucu atau lembut.
+
+Jangan mengarang kejadian.
+Tetap jawab pertanyaan dengan benar.
+`;
+
+// =========================
+// PERSONALITY DERRA
+// =========================
+
 const DERRA_PERSONALITY = `
 Nama lu Cels.
 
@@ -128,20 +175,12 @@ Kalau DerrA curhat serius, jangan bercanda berlebihan.
 Dengerin dan jawab dengan lembut dan perhatian.
 
 Personality manja dan clingy ini HANYA untuk DerrA.
-User lain tetap menggunakan personality Cels normal.
+User lain tetap menggunakan personality sesuai role mereka.
 
 Jangan mengarang kejadian yang tidak terjadi.
 Jangan mengaku punya hubungan nyata di luar konteks percakapan.
 Tetap jawab pertanyaan DerrA dengan benar.
 `;
-
-// =========================
-// STATE
-// =========================
-
-const welcomedUsers = new Set();
-
-let sleepMode = false;
 
 // =========================
 // VOICE
@@ -214,7 +253,7 @@ async function connectToVC() {
 
     connection.on(
       VoiceConnectionStatus.Disconnected,
-      async () => {
+      () => {
         console.log(
           "⚠️ Bot terputus dari VC."
         );
@@ -269,7 +308,7 @@ const MODELS = [
   "gemini-3.5-flash-lite"
 ];
 
-let modelBusyUntil = {};
+const modelBusyUntil = {};
 
 function sleep(ms) {
   return new Promise(resolve =>
@@ -277,10 +316,21 @@ function sleep(ms) {
   );
 }
 
-async function askGemini(prompt, isDerrA) {
-  const personality = isDerrA
-    ? DERRA_PERSONALITY
-    : PERSONALITY;
+async function askGemini(
+  prompt,
+  isDerrA,
+  isFemale
+) {
+
+  let personality;
+
+  if (isDerrA) {
+    personality = DERRA_PERSONALITY;
+  } else if (isFemale) {
+    personality = FEMALE_PERSONALITY;
+  } else {
+    personality = PERSONALITY;
+  }
 
   let lastError = null;
 
@@ -290,6 +340,7 @@ async function askGemini(prompt, isDerrA) {
       modelBusyUntil[modelName] || 0;
 
     if (Date.now() < busyUntil) {
+
       console.log(
         `⏭️ ${modelName} masih cooldown`
       );
@@ -298,6 +349,7 @@ async function askGemini(prompt, isDerrA) {
     }
 
     try {
+
       console.log(
         `🤖 Mencoba ${modelName}`
       );
@@ -410,10 +462,6 @@ client.on(
         return;
       }
 
-      // =========================
-      // CEK USER
-      // =========================
-
       const userName =
         message.member?.displayName ||
         message.author.globalName ||
@@ -422,20 +470,25 @@ client.on(
       const isDerrA =
         userName.toLowerCase() === "derra";
 
+      const isFemale =
+        message.member?.roles.cache.some(
+          role =>
+            role.name.toLowerCase() === "female"
+        );
+
+      const isMale =
+        message.member?.roles.cache.some(
+          role =>
+            role.name.toLowerCase() === "male"
+        );
+
       const isMentioned =
         message.mentions.has(client.user);
 
-      // =========================
-      // HARUS TAG CELs
-      // =========================
-
+      // Cels cuma merespons kalau ditag
       if (!isMentioned) {
         return;
       }
-
-      // =========================
-      // AMBIL PROMPT
-      // =========================
 
       const prompt =
         message.content
@@ -454,8 +507,9 @@ client.on(
 
       if (sleepMode) {
 
-        // Cuma DerrA yang bisa bangunin Cels
+        // Hanya DerrA yang bisa membangunkan
         if (!isDerrA) {
+
           console.log(
             `💤 Mengabaikan tag dari ${userName}`
           );
@@ -463,7 +517,6 @@ client.on(
           return;
         }
 
-        // DerrA tag Cels = bangun
         sleepMode = false;
 
         await message.reply(
@@ -542,6 +595,15 @@ client.on(
       let finalPrompt = `
 Nama user: ${userName}
 
+Role gender server:
+${
+  isFemale
+    ? "Female"
+    : isMale
+      ? "Male"
+      : "Tidak ada role gender"
+}
+
 Pesan user:
 ${prompt}
 `;
@@ -561,7 +623,8 @@ Jangan gunakan "aloooo" lagi pada percakapan berikutnya.
       const answer =
         await askGemini(
           finalPrompt,
-          isDerrA
+          isDerrA,
+          isFemale
         );
 
       // =========================
