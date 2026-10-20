@@ -14,7 +14,7 @@ const {
 } = require("@discordjs/voice");
 
 // =====================================================
-// CONFIG
+// ENV
 // =====================================================
 
 const TOKEN = (process.env.TOKEN || "").trim();
@@ -25,23 +25,21 @@ function sanitize(value) {
   let text =
     typeof value === "string"
       ? value
-      : value && typeof value.message === "string"
-        ? value.message
-        : String(value);
+      : value?.message || String(value);
 
   if (TOKEN) {
-    text = text.split(TOKEN).join("[REDACTED]");
+    text = text.replaceAll(TOKEN, "[REDACTED]");
   }
 
   return text;
 }
 
-function log(...parts) {
-  console.log(...parts.map(sanitize));
+function log(...args) {
+  console.log(...args.map(sanitize));
 }
 
-function logError(...parts) {
-  console.error(...parts.map(sanitize));
+function error(...args) {
+  console.error(...args.map(sanitize));
 }
 
 // =====================================================
@@ -54,9 +52,9 @@ if (!TOKEN) missing.push("TOKEN");
 if (!GUILD_ID) missing.push("GUILD_ID");
 if (!CHANNEL_ID) missing.push("CHANNEL_ID");
 
-if (missing.length > 0) {
-  logError(
-    "[BOOT] Environment variable belum dipasang: " +
+if (missing.length) {
+  error(
+    "[BOOT] Environment variable belum dipasang:",
     missing.join(", ")
   );
 
@@ -67,15 +65,15 @@ if (
   !/^\d{17,20}$/.test(GUILD_ID) ||
   !/^\d{17,20}$/.test(CHANNEL_ID)
 ) {
-  logError(
-    "[BOOT] GUILD_ID / CHANNEL_ID harus berupa ID Discord 17-20 digit."
+  error(
+    "[BOOT] GUILD_ID / CHANNEL_ID tidak valid."
   );
 
   process.exit(1);
 }
 
 // =====================================================
-// DISCORD CLIENT
+// DISCORD
 // =====================================================
 
 const client = new Client({
@@ -83,183 +81,167 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildVoiceStates,
   ],
-  allowedMentions: {
-    parse: [],
-    repliedUser: false,
-  },
 });
 
 // =====================================================
 // VOICE STATE
 // =====================================================
 
-const voice = {
-  connection: null,
-  connecting: false,
-  reconnectTimer: null,
-  attempt: 0,
-};
-
+let connection = null;
+let connecting = false;
+let reconnectTimer = null;
 let shuttingDown = false;
+
+let reconnectAttempt = 0;
 
 // =====================================================
 // RECONNECT
 // =====================================================
 
-function scheduleReconnect(reason, delay = null) {
-  if (shuttingDown) {
-    return;
-  }
+function scheduleReconnect(reason, delay = 10000) {
+  if (shuttingDown) return;
+  if (reconnectTimer) return;
+  if (connecting) return;
 
-  if (voice.reconnectTimer) {
-    return;
-  }
+  reconnectAttempt++;
 
-  voice.attempt++;
+  const maxDelay = 5 * 60 * 1000;
 
-  const reconnectDelay =
-    delay !== null
-      ? delay
-      : Math.min(
-          5000 * Math.pow(2, voice.attempt - 1),
-          300000
-        );
-
-  log(
-    "[VOICE] Reconnect #" +
-      voice.attempt +
-      " dalam " +
-      Math.round(reconnectDelay / 1000) +
-      " detik (" +
-      reason +
-      ")."
+  const actualDelay = Math.min(
+    delay * Math.pow(2, reconnectAttempt - 1),
+    maxDelay
   );
 
-  voice.reconnectTimer = setTimeout(() => {
-    voice.reconnectTimer = null;
+  log(
+    `[VOICE] Reconnect #${reconnectAttempt} dalam ${Math.round(
+      actualDelay / 1000
+    )} detik (${reason})`
+  );
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
     connectToVC();
-  }, reconnectDelay);
+  }, actualDelay);
 }
 
 // =====================================================
-// DESTROY CURRENT CONNECTION
+// DESTROY
 // =====================================================
 
-function destroyConnection(connectionToDestroy = null) {
-  const current =
-    connectionToDestroy || voice.connection;
+function destroyConnection() {
+  const current = connection;
 
-  if (!current) {
-    return;
+  connection = null;
+
+  if (current) {
+    try {
+      current.destroy();
+    } catch {}
   }
-
-  if (voice.connection === current) {
-    voice.connection = null;
-  }
-
-  try {
-    current.destroy();
-  } catch {}
 }
 
 // =====================================================
-// VOICE HANDLERS
+// VOICE ERROR HANDLERS
 // =====================================================
 
-function attachHandlers(connection) {
-  connection.on(
+function setupConnection(connectionInstance) {
+  connectionInstance.on(
     "stateChange",
     (oldState, newState) => {
       log(
-        "[VOICE] " +
-          oldState.status +
-          " -> " +
-          newState.status
+        `[VOICE] ${oldState.status} -> ${newState.status}`
       );
     }
   );
 
-  connection.on("error", (error) => {
-    if (voice.connection !== connection) {
-      return;
+  connectionInstance.on(
+    "error",
+    (err) => {
+      if (
+        connection !== connectionInstance
+      ) {
+        return;
+      }
+
+      error(
+        "[VOICE] Voice error:",
+        err.message
+      );
+
+      destroyConnection();
+
+      scheduleReconnect(
+        "voice error",
+        10000
+      );
     }
+  );
 
-    logError(
-      "[VOICE] Connection error:",
-      error
-    );
-
-    destroyConnection(connection);
-
-    scheduleReconnect(
-      "voice connection error",
-      10000
-    );
-  });
-
-  connection.on(
+  connectionInstance.on(
     VoiceConnectionStatus.Disconnected,
     async () => {
-      if (voice.connection !== connection) {
+      if (
+        connection !== connectionInstance
+      ) {
         return;
       }
 
       log(
-        "[VOICE] Bot terputus dari VC."
+        "[VOICE] Voice disconnected."
       );
 
       try {
         await Promise.race([
           entersState(
-            connection,
+            connectionInstance,
             VoiceConnectionStatus.Signalling,
             5000
           ),
           entersState(
-            connection,
+            connectionInstance,
             VoiceConnectionStatus.Connecting,
             5000
           ),
         ]);
 
-        if (voice.connection !== connection) {
-          return;
-        }
-
         log(
-          "[VOICE] Koneksi sedang mencoba pulih..."
+          "[VOICE] Discord sedang memulihkan koneksi..."
         );
 
       } catch {
-        if (voice.connection !== connection) {
+        if (
+          connection !== connectionInstance
+        ) {
           return;
         }
 
         log(
-          "[VOICE] Koneksi tidak pulih. Reconnect."
+          "[VOICE] Pemulihan gagal. Reconnect."
         );
 
-        destroyConnection(connection);
+        destroyConnection();
 
         scheduleReconnect(
           "disconnected",
-          5000
+          10000
         );
       }
     }
   );
 
-  connection.on(
+  connectionInstance.on(
     VoiceConnectionStatus.Destroyed,
     () => {
-      if (voice.connection !== connection) {
+      if (
+        connection !== connectionInstance
+      ) {
         return;
       }
 
-      voice.connection = null;
+      connection = null;
 
       scheduleReconnect(
-        "connection destroyed",
+        "destroyed",
         10000
       );
     }
@@ -267,17 +249,14 @@ function attachHandlers(connection) {
 }
 
 // =====================================================
-// CONNECT TO VC
+// CONNECT
 // =====================================================
 
 async function connectToVC() {
-  if (voice.connecting || shuttingDown) {
-    return;
-  }
+  if (shuttingDown) return;
+  if (connecting) return;
 
-  voice.connecting = true;
-
-  let newConnection = null;
+  connecting = true;
 
   try {
     const guild =
@@ -285,32 +264,22 @@ async function connectToVC() {
 
     if (!guild) {
       throw new Error(
-        "Guild tidak ditemukan: " +
-          GUILD_ID
+        `Server tidak ditemukan: ${GUILD_ID}`
       );
     }
 
     log(
-      "[DISCORD] Server ditemukan: " +
-        guild.name
+      `[DISCORD] Server ditemukan: ${guild.name}`
     );
 
-    let channel =
-      guild.channels.cache.get(
-        CHANNEL_ID
-      );
-
-    if (!channel) {
-      channel =
-        await guild.channels
-          .fetch(CHANNEL_ID)
-          .catch(() => null);
-    }
+    const channel =
+      await guild.channels
+        .fetch(CHANNEL_ID)
+        .catch(() => null);
 
     if (!channel) {
       throw new Error(
-        "Voice channel tidak ditemukan: " +
-          CHANNEL_ID
+        `Channel tidak ditemukan: ${CHANNEL_ID}`
       );
     }
 
@@ -321,102 +290,112 @@ async function connectToVC() {
     }
 
     log(
-      "[DISCORD] Channel ditemukan: " +
-        channel.name
+      `[DISCORD] Channel target: ${channel.name}`
     );
 
     // =================================================
-    // PERMISSION CHECK
+    // PERMISSION
     // =================================================
 
     const me = guild.members.me;
 
-    const permissions =
-      me
-        ? channel.permissionsFor(me)
-        : null;
+    if (me) {
+      const permissions =
+        channel.permissionsFor(me);
 
-    if (
-      permissions &&
-      !permissions.has(
-        PermissionFlagsBits.ViewChannel
-      )
-    ) {
-      throw new Error(
-        "Bot tidak punya permission View Channel."
-      );
-    }
+      if (
+        permissions &&
+        !permissions.has(
+          PermissionFlagsBits.ViewChannel
+        )
+      ) {
+        throw new Error(
+          "Bot tidak punya View Channel."
+        );
+      }
 
-    if (
-      permissions &&
-      !permissions.has(
-        PermissionFlagsBits.Connect
-      )
-    ) {
-      throw new Error(
-        "Bot tidak punya permission Connect."
-      );
+      if (
+        permissions &&
+        !permissions.has(
+          PermissionFlagsBits.Connect
+        )
+      ) {
+        throw new Error(
+          "Bot tidak punya Connect."
+        );
+      }
     }
 
     // =================================================
-    // CEK KONEKSI LAMA
+    // CEK POSISI BOT
+    // =================================================
+
+    const currentChannelId =
+      me?.voice?.channelId;
+
+    if (
+      currentChannelId === CHANNEL_ID
+    ) {
+      log(
+        `[VOICE] Bot sudah berada di channel target: ${channel.name}`
+      );
+
+      const existing =
+        getVoiceConnection(GUILD_ID);
+
+      if (existing) {
+        connection = existing;
+      }
+
+      reconnectAttempt = 0;
+
+      return;
+    }
+
+    // =================================================
+    // KALAU ADA KONEKSI LAMA
     // =================================================
 
     const existing =
       getVoiceConnection(GUILD_ID);
 
     if (existing) {
-      if (
-        existing.state.status ===
-        VoiceConnectionStatus.Ready
-      ) {
-        const currentChannelId =
-          me?.voice?.channelId;
+      log(
+        "[VOICE] Membersihkan koneksi voice lama..."
+      );
 
-        if (
-          currentChannelId === CHANNEL_ID
-        ) {
-          log(
-            "[VOICE] Bot sudah berada di VC."
-          );
+      try {
+        existing.destroy();
+      } catch {}
 
-          voice.connection = existing;
-          voice.connecting = false;
-          voice.attempt = 0;
-
-          return;
-        }
+      if (connection === existing) {
+        connection = null;
       }
-
-      destroyConnection(existing);
     }
 
     // =================================================
-    // JOIN VC
+    // JOIN TARGET
     // =================================================
 
     log(
-      "[VOICE] Menghubungkan ke VC..."
+      `[VOICE] Join ke: ${channel.name}`
     );
 
-    newConnection =
+    const newConnection =
       joinVoiceChannel({
         channelId: CHANNEL_ID,
         guildId: GUILD_ID,
         adapterCreator:
           guild.voiceAdapterCreator,
 
-        // Bot AFK tidak perlu menerima audio
         selfDeaf: true,
-
-        // Bot juga tidak mengirim audio
         selfMute: true,
       });
 
-    voice.connection =
+    connection =
       newConnection;
 
-    attachHandlers(
+    setupConnection(
       newConnection
     );
 
@@ -431,54 +410,41 @@ async function connectToVC() {
     );
 
     if (
-      voice.connection !==
-      newConnection
+      connection !== newConnection
     ) {
       return;
     }
 
-    voice.attempt = 0;
+    reconnectAttempt = 0;
 
     log(
       "========================================"
     );
 
     log(
-      "[VOICE] BOT BERHASIL MASUK VC"
+      `[VOICE] BERHASIL MASUK: ${channel.name}`
     );
 
     log(
-      "[VOICE] Server : " +
-        guild.name
-    );
-
-    log(
-      "[VOICE] Channel: " +
-        channel.name
-    );
-
-    log(
-      "[VOICE] Status  : STANDBY 24/7"
+      "[VOICE] Status: STANDBY 24/7"
     );
 
     log(
       "========================================"
     );
 
-  } catch (error) {
-    logError(
+  } catch (err) {
+    error(
       "[VOICE] Gagal masuk VC:",
-      error
+      err.message
     );
 
-    if (
-      newConnection &&
-      voice.connection ===
-        newConnection
-    ) {
-      destroyConnection(
-        newConnection
-      );
+    if (connection) {
+      try {
+        connection.destroy();
+      } catch {}
+
+      connection = null;
     }
 
     scheduleReconnect(
@@ -487,77 +453,19 @@ async function connectToVC() {
     );
 
   } finally {
-    voice.connecting = false;
+    connecting = false;
   }
 }
 
 // =====================================================
-// WATCHDOG
-// =====================================================
-
-function watchdog() {
-  if (
-    shuttingDown ||
-    voice.connecting ||
-    voice.reconnectTimer
-  ) {
-    return;
-  }
-
-  const guild =
-    client.guilds.cache.get(
-      GUILD_ID
-    );
-
-  if (!guild) {
-    return;
-  }
-
-  const connection =
-    getVoiceConnection(
-      GUILD_ID
-    );
-
-  const me =
-    guild.members.me;
-
-  const currentChannelId =
-    me?.voice?.channelId;
-
-  const status =
-    connection?.state?.status;
-
-  const noConnection =
-    !connection ||
-    status ===
-      VoiceConnectionStatus.Destroyed;
-
-  const wrongChannel =
-    status ===
-      VoiceConnectionStatus.Ready &&
-    currentChannelId &&
-    currentChannelId !==
-      CHANNEL_ID;
-
-  if (
-    noConnection ||
-    wrongChannel
-  ) {
-    log(
-      "[WATCHDOG] Koneksi VC tidak sehat. Reconnect."
-    );
-
-    connectToVC();
-  }
-}
-
-// =====================================================
-// BOT VOICE STATE UPDATE
+// VOICE STATE UPDATE
 // =====================================================
 
 client.on(
   "voiceStateUpdate",
   (oldState, newState) => {
+
+    // HANYA pantau perubahan voice milik bot
     if (
       newState.id !==
       client.user?.id
@@ -565,17 +473,45 @@ client.on(
       return;
     }
 
+    const newChannel =
+      newState.channelId;
+
+    // Bot masuk channel target
     if (
-      newState.channelId !==
-      CHANNEL_ID
+      newChannel === CHANNEL_ID
     ) {
       log(
-        "[VOICE] Bot tidak berada di channel target."
+        "[VOICE] Bot berada di channel target."
       );
 
-      setTimeout(
-        watchdog,
-        3000
+      return;
+    }
+
+    // Jangan langsung reconnect.
+    // Discord kadang mengirim event transisi
+    // ketika proses join masih berlangsung.
+    if (connecting) {
+      return;
+    }
+
+    // Bot benar-benar berada di channel lain
+    if (newChannel) {
+      log(
+        `[VOICE] Bot berada di channel lain (${newChannel}).`
+      );
+
+      return;
+    }
+
+    // Bot benar-benar disconnected
+    if (!newChannel) {
+      log(
+        "[VOICE] Bot disconnected dari voice."
+      );
+
+      scheduleReconnect(
+        "bot disconnected",
+        10000
       );
     }
   }
@@ -585,28 +521,24 @@ client.on(
 // READY
 // =====================================================
 
-let booted = false;
-
 client.once(
   "clientReady",
   async () => {
-    if (booted) {
-      return;
-    }
-
-    booted = true;
 
     log(
       "========================================"
     );
 
     log(
-      "[DISCORD] Online sebagai " +
-        client.user.tag
+      `[DISCORD] Online sebagai ${client.user.tag}`
     );
 
     log(
-      "[DISCORD] Client READY"
+      `[DISCORD] Server ID : ${GUILD_ID}`
+    );
+
+    log(
+      `[DISCORD] Channel ID: ${CHANNEL_ID}`
     );
 
     log(
@@ -614,54 +546,53 @@ client.once(
     );
 
     await connectToVC();
-
-    setInterval(
-      watchdog,
-      60000
-    );
   }
 );
 
 // =====================================================
-// ERROR HANDLING
+// DISCORD ERRORS
 // =====================================================
 
 client.on(
   "error",
-  (error) => {
-    logError(
+  (err) => {
+    error(
       "[DISCORD] Client error:",
-      error
+      err.message
     );
   }
 );
 
 client.on(
   "shardError",
-  (error) => {
-    logError(
+  (err) => {
+    error(
       "[DISCORD] Shard error:",
-      error
+      err.message
     );
   }
 );
 
+// =====================================================
+// PROCESS ERRORS
+// =====================================================
+
 process.on(
   "unhandledRejection",
-  (error) => {
-    logError(
+  (err) => {
+    error(
       "[ERROR] Unhandled rejection:",
-      error
+      err
     );
   }
 );
 
 process.on(
   "uncaughtException",
-  (error) => {
-    logError(
+  (err) => {
+    error(
       "[ERROR] Uncaught exception:",
-      error
+      err
     );
   }
 );
@@ -678,18 +609,15 @@ async function shutdown(signal) {
   shuttingDown = true;
 
   log(
-    "[BOOT] " +
-      signal +
-      " diterima. Shutdown..."
+    `[BOOT] ${signal} diterima.`
   );
 
-  if (voice.reconnectTimer) {
+  if (reconnectTimer) {
     clearTimeout(
-      voice.reconnectTimer
+      reconnectTimer
     );
 
-    voice.reconnectTimer =
-      null;
+    reconnectTimer = null;
   }
 
   destroyConnection();
@@ -726,18 +654,18 @@ client
       "[DISCORD] Login berhasil."
     );
   })
-  .catch((error) => {
+  .catch((err) => {
     const message =
-      sanitize(error);
+      sanitize(err);
 
     if (
       /token/i.test(message)
     ) {
-      logError(
+      error(
         "[DISCORD] Login gagal: TOKEN tidak valid."
       );
     } else {
-      logError(
+      error(
         "[DISCORD] Login gagal:",
         message
       );
