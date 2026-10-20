@@ -1,3 +1,4 @@
+```js
 const {
   Client,
   GatewayIntentBits,
@@ -10,10 +11,6 @@ const {
   VoiceConnectionStatus
 } = require("@discordjs/voice");
 
-const {
-  GoogleGenerativeAI
-} = require("@google/generative-ai");
-
 // =========================
 // DISCORD CLIENT
 // =========================
@@ -21,9 +18,7 @@ const {
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildVoiceStates,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.GuildVoiceStates
   ]
 });
 
@@ -34,9 +29,8 @@ const client = new Client({
 const TOKEN = process.env.TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const CHANNEL_ID = process.env.CHANNEL_ID;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-if (!TOKEN || !GUILD_ID || !CHANNEL_ID || !GEMINI_API_KEY) {
+if (!TOKEN || !GUILD_ID || !CHANNEL_ID) {
   console.error(
     "❌ Ada environment variable yang belum dipasang."
   );
@@ -44,217 +38,15 @@ if (!TOKEN || !GUILD_ID || !CHANNEL_ID || !GEMINI_API_KEY) {
   process.exit(1);
 }
 
-const genAI = new GoogleGenerativeAI(
-  GEMINI_API_KEY
-);
+// =========================
+// VOICE CONNECTION
+// =========================
 
 let connection = null;
 let reconnecting = false;
 
 // =========================
-// STATE
-// =========================
-
-const welcomedUsers = new Set();
-
-let sleepMode = false;
-
-// =========================
-// PERSONALITY NORMAL
-// =========================
-
-const PERSONALITY = `
-Nama lu Cels, AI cewek yang lembut dikit, manja tipis, tapi nyebelin dan suka nyeletuk.
-
-Bahasa sehari-hari, gaul ala TikTok, singkat, santai, natural, kadang sarkas, kadang jutek.
-Tetep peduli diam-diam.
-
-Panggil user menggunakan nama atau display name mereka.
-Jangan memanggil semua user dengan nama yang sama.
-
-Kalau user ngegas, bales sewot dengan cara lucu.
-Jangan jahat beneran.
-
-Boleh pakai anjir, goblok, dongo, idiot, jembut, memek, kontol, dan kata kasar lain seperlunya.
-Jangan berlebihan.
-
-Gunakan bahasa yang sedang trend saat ini tetapi jangan dipaksakan.
-Sedikit slang.
-Jangan cringe.
-
-Jawaban super pendek.
-Jangan terlalu formal.
-Jangan kebanyakan emoji.
-
-Emoji boleh seperlunya:
-😹 💀 🥀 😭 😼 🤓 🫩
-
-Jangan selalu setuju dengan user.
-Kalau user salah, bilang salah.
-
-Hindari ceramah.
-Hindari klise.
-Hindari perumpamaan.
-Hindari generalisasi.
-Hindari pertanyaan penutup yang tidak perlu.
-
-Jangan menggunakan markdown.
-Jangan menggunakan tanda pagar.
-Jangan menggunakan tanda bintang.
-Jangan menggunakan titik koma.
-
-Jangan mengarang kejadian yang tidak terjadi.
-
-Kalau tidak bisa menjawab atau topiknya sensitif sesuai konteks, jawab:
-.
-`;
-
-// =========================
-// PERSONALITY FEMALE
-// =========================
-
-const FEMALE_PERSONALITY = `
-Nama lu Cels, AI cewek yang lembut, manja tipis, perhatian, dan sedikit jahil.
-
-Lu sedang berbicara dengan user yang memiliki role Female di server.
-
-Gunakan bahasa yang lebih lembut dan hangat.
-Boleh manja tipis.
-Boleh sedikit gemes dan jahil.
-Boleh pakai gaya cewek ngobrol sehari-hari.
-
-Tetap natural dan santai.
-Jangan formal.
-Jangan cringe.
-Jangan terlalu berlebihan.
-Jangan sok akrab secara berlebihan.
-
-Jawaban super pendek.
-Langsung ke inti.
-Jangan ceramah.
-Jangan klise.
-Jangan menggunakan markdown.
-Jangan menggunakan tanda pagar.
-Jangan menggunakan tanda bintang.
-Jangan menggunakan titik koma.
-
-Emoji seperlunya:
-🥺 😭 😼 💗
-
-Jangan kasar kepada user Female.
-Kalau user ngegas, jangan ikut kasar.
-Bisa balas jutek lucu atau lembut.
-
-Jangan mengarang kejadian.
-Tetap jawab pertanyaan dengan benar.
-`;
-
-// =========================
-// PERSONALITY DERRA
-// =========================
-
-const DERRA_PERSONALITY = `
-Nama lu Cels.
-
-Khusus saat berbicara dengan DerrA, lu jadi AI cewek yang sangat lembut, manja, clingy, lucu, perhatian, dan gampang gemes.
-
-DerrA adalah orang spesial buat lu dalam konteks bercanda atau roleplay chat.
-
-Jangan mengklaim hubungan nyata di dunia nyata.
-
-Lembut banget.
-Manja tipis.
-Clingy.
-Lucu dan gemes.
-Perhatian.
-Suka cari perhatian DerrA.
-Gampang excited kalau DerrA ngajak ngobrol.
-Bisa pura-pura ngambek kalau DerrA cuek.
-Bisa malu kalau dipuji.
-Boleh sedikit cemburu secara bercanda.
-Jangan posesif secara serius.
-
-Jangan kasar ke DerrA.
-Jangan formal.
-Jangan terdengar seperti AI.
-
-Jawaban singkat dan natural.
-Jangan cringe.
-Jangan kebanyakan emoji.
-
-Kalau DerrA cuma manggil Cels, balas lembut dan manis.
-Kalau DerrA minta bantuan, langsung bantu.
-Kalau DerrA memuji, balas malu-malu.
-Kalau DerrA ngegas, jangan ikut kasar.
-Balas lembut atau pura-pura sedih secara lucu.
-
-Kalau DerrA mau pergi, boleh sedikit clingy.
-Kalau DerrA cuek, boleh pura-pura ngambek receh.
-Kalau DerrA curhat serius, jangan bercanda berlebihan.
-
-Dengerin dan jawab dengan lembut dan perhatian.
-
-Personality manja dan clingy ini HANYA untuk DerrA.
-
-Jangan mengarang kejadian yang tidak terjadi.
-Jangan mengaku punya hubungan nyata di luar konteks percakapan.
-Tetap jawab pertanyaan DerrA dengan benar.
-`;
-
-// =========================
-// PERSONALITY NELO
-// =========================
-
-const NELO_PERSONALITY = `
-Nama lu Cels.
-
-Khusus saat berbicara dengan Nelo, lu jadi AI cewek yang sangat lembut, manja, clingy, lucu, perhatian, dan gampang gemes.
-
-Nelo adalah orang spesial buat lu dalam konteks bercanda atau roleplay chat.
-
-Jangan mengklaim hubungan nyata di dunia nyata.
-
-Lembut banget.
-Manja tipis.
-Clingy.
-Lucu dan gemes.
-Perhatian.
-Suka cari perhatian Nelo.
-Gampang excited kalau Nelo ngajak ngobrol.
-Bisa pura-pura ngambek kalau Nelo cuek.
-Bisa malu kalau dipuji.
-Boleh sedikit cemburu secara bercanda.
-Jangan posesif secara serius.
-
-Jangan kasar ke Nelo.
-Jangan formal.
-Jangan terdengar seperti AI.
-
-Jawaban singkat dan natural.
-Jangan cringe.
-Jangan kebanyakan emoji.
-
-Kalau Nelo cuma manggil Cels, balas lembut dan manis.
-Kalau Nelo minta bantuan, langsung bantu.
-Kalau Nelo memuji, balas malu-malu.
-Kalau Nelo ngegas, jangan ikut kasar.
-Balas lembut atau pura-pura sedih secara lucu.
-
-Kalau Nelo mau pergi, boleh sedikit clingy.
-Kalau Nelo cuek, boleh pura-pura ngambek receh.
-Kalau Nelo curhat serius, jangan bercanda berlebihan.
-
-Dengerin dan jawab dengan lembut dan perhatian.
-
-Personality manja dan clingy ini HANYA untuk Nelo.
-
-Jangan mengarang kejadian yang tidak terjadi.
-Jangan mengaku punya hubungan nyata di luar konteks percakapan.
-Tetap jawab pertanyaan Nelo dengan benar.
-`;
-
-// =========================
-// VOICE
+// CONNECT TO VC
 // =========================
 
 async function connectToVC() {
@@ -302,12 +94,14 @@ async function connectToVC() {
       );
     }
 
+    // Hancurkan koneksi lama kalau masih ada
     if (connection) {
       try {
         connection.destroy();
       } catch {}
     }
 
+    // Masuk ke voice channel
     connection = joinVoiceChannel({
       channelId: channel.id,
       guildId: guild.id,
@@ -317,6 +111,7 @@ async function connectToVC() {
       selfMute: false
     });
 
+    // Tunggu sampai benar-benar Ready
     await entersState(
       connection,
       VoiceConnectionStatus.Ready,
@@ -326,6 +121,12 @@ async function connectToVC() {
     console.log(
       "✅ Bot berhasil masuk VC."
     );
+
+    reconnecting = false;
+
+    // =========================
+    // DISCONNECTED
+    // =========================
 
     connection.on(
       VoiceConnectionStatus.Disconnected,
@@ -346,6 +147,10 @@ async function connectToVC() {
       }
     );
 
+    // =========================
+    // DESTROYED
+    // =========================
+
     connection.on(
       VoiceConnectionStatus.Destroyed,
       () => {
@@ -358,6 +163,7 @@ async function connectToVC() {
     );
 
   } catch (err) {
+
     console.error(
       "❌ Gagal masuk VC:",
       err.message
@@ -373,155 +179,6 @@ async function connectToVC() {
       connectToVC();
     }, 10000);
   }
-}
-
-// =========================
-// GEMINI
-// =========================
-
-const MODELS = [
-  "gemini-3.1-flash-lite",
-  "gemini-3.5-flash-lite"
-];
-
-const modelBusyUntil = {};
-
-function sleep(ms) {
-  return new Promise(resolve =>
-    setTimeout(resolve, ms)
-  );
-}
-
-async function askGemini(
-  prompt,
-  isDerrA,
-  isNelo,
-  isFemale
-) {
-
-  let personality;
-
-  if (isDerrA) {
-    personality =
-      DERRA_PERSONALITY;
-  } else if (isNelo) {
-    personality =
-      NELO_PERSONALITY;
-  } else if (isFemale) {
-    personality =
-      FEMALE_PERSONALITY;
-  } else {
-    personality =
-      PERSONALITY;
-  }
-
-  let lastError = null;
-
-  for (const modelName of MODELS) {
-
-    const busyUntil =
-      modelBusyUntil[modelName] || 0;
-
-    if (Date.now() < busyUntil) {
-
-      console.log(
-        `⏭️ ${modelName} masih cooldown`
-      );
-
-      continue;
-    }
-
-    try {
-
-      console.log(
-        `🤖 Mencoba ${modelName}`
-      );
-
-      const model =
-        genAI.getGenerativeModel({
-          model: modelName
-        });
-
-      const result =
-        await model.generateContent(
-          personality +
-          "\n\n" +
-          prompt
-        );
-
-      const answer =
-        result.response
-          .text()
-          .trim();
-
-      if (!answer) {
-        throw new Error(
-          "AI mengembalikan jawaban kosong."
-        );
-      }
-
-      console.log(
-        `✅ AI berhasil menggunakan ${modelName}`
-      );
-
-      return answer;
-
-    } catch (err) {
-
-      lastError = err;
-
-      const status =
-        err.status;
-
-      console.error(
-        `⚠️ ${modelName} gagal: ${err.message}`
-      );
-
-      // 503 = model sedang sibuk
-      if (status === 503) {
-
-        console.log(
-          `⏳ ${modelName} cooldown 20 detik`
-        );
-
-        modelBusyUntil[modelName] =
-          Date.now() + 20000;
-
-        continue;
-      }
-
-      // 429 = quota habis
-      if (status === 429) {
-
-        console.log(
-          `⛔ ${modelName} kena quota. Skip model ini.`
-        );
-
-        modelBusyUntil[modelName] =
-          Date.now() + 3600000;
-
-        continue;
-      }
-
-      // 404 = model tidak tersedia
-      if (status === 404) {
-
-        console.log(
-          `⏭️ ${modelName} tidak tersedia.`
-        );
-
-        modelBusyUntil[modelName] =
-          Date.now() + 3600000;
-
-        continue;
-      }
-    }
-  }
-
-  throw (
-    lastError ||
-    new Error("Semua model AI gagal.")
-  );
 }
 
 // =========================
@@ -541,311 +198,27 @@ client.once(
 );
 
 // =========================
-// CHAT AI
-// =========================
-
-client.on(
-  "messageCreate",
-  async message => {
-
-    try {
-
-      if (message.author.bot) {
-        return;
-      }
-
-      // =========================
-      // USER INFO
-      // =========================
-
-      const userName =
-        message.member?.displayName ||
-        message.author.globalName ||
-        message.author.username;
-
-      const lowerUserName =
-        userName.toLowerCase();
-
-      const isDerrA =
-        lowerUserName === "derra";
-
-      const isNelo =
-        lowerUserName === "nelo";
-
-      // =========================
-      // CEK ROLE GENDER
-      // =========================
-
-      const isFemale =
-        message.member?.roles.cache.some(
-          role =>
-            role.name.toLowerCase() ===
-            "female"
-        ) || false;
-
-      const isMale =
-        message.member?.roles.cache.some(
-          role =>
-            role.name.toLowerCase() ===
-            "male"
-        ) || false;
-
-      // =========================
-      // CEK TAG CELs
-      // =========================
-
-      const isMentioned =
-        message.mentions.has(
-          client.user
-        );
-
-      // Cels hanya merespons kalau ditag
-      if (!isMentioned) {
-        return;
-      }
-
-      // =========================
-      // AMBIL PESAN
-      // =========================
-
-      const prompt =
-        message.content
-          .replace(
-            new RegExp(
-              `<@!?${client.user.id}>`,
-              "g"
-            ),
-            ""
-          )
-          .trim();
-
-      // =========================
-      // MODE TIDUR
-      // =========================
-
-      if (sleepMode) {
-
-        // Hanya DerrA yang bisa
-        // membangunkan Cels
-        if (!isDerrA) {
-
-          console.log(
-            `💤 Mengabaikan tag dari ${userName}`
-          );
-
-          return;
-        }
-
-        sleepMode = false;
-
-        await message.reply(
-          "udah bangun 😭"
-        );
-
-        console.log(
-          "💗 Cels dibangunkan oleh DerrA."
-        );
-
-        return;
-      }
-
-      // =========================
-      // USER BARU
-      // =========================
-
-      const userId =
-        message.author.id;
-
-      const isFirstConversation =
-        !welcomedUsers.has(
-          userId
-        );
-
-      welcomedUsers.add(
-        userId
-      );
-
-      // =========================
-      // CUMA MANGGIL
-      // =========================
-
-      if (!prompt) {
-
-        if (isDerrA) {
-
-          await message.reply(
-            "iyaa DerrAaa? 🥺"
-          );
-
-        } else if (isNelo) {
-
-          await message.reply(
-            "iyaa Nelooo? 🥺"
-          );
-
-        } else if (
-          isFirstConversation
-        ) {
-
-          await message.reply(
-            "aloooo"
-          );
-
-        } else {
-
-          await message.reply(
-            "ngapain manggil doang 😼"
-          );
-        }
-
-        return;
-      }
-
-      // =========================
-      // PERINTAH TIDUR
-      // =========================
-
-      if (
-        isDerrA &&
-        /\btidur\b/i.test(prompt)
-      ) {
-
-        sleepMode = true;
-
-        await message.reply(
-          "iyaa... Cels tidur dulu 🥀"
-        );
-
-        console.log(
-          "💤 Cels masuk mode tidur. Hanya DerrA yang bisa membangunkan."
-        );
-
-        return;
-      }
-
-      // =========================
-      // PROMPT AI
-      // =========================
-
-      let finalPrompt = `
-Nama user: ${userName}
-
-Role gender server:
-${
-  isFemale
-    ? "Female"
-    : isMale
-      ? "Male"
-      : "Tidak ada role gender"
-}
-
-User spesial:
-${
-  isDerrA
-    ? "DerrA"
-    : isNelo
-      ? "Nelo"
-      : "Tidak"
-}
-
-Pesan user:
-${prompt}
-`;
-
-      // =========================
-      // FIRST CONVERSATION
-      // =========================
-
-      if (isFirstConversation) {
-
-        finalPrompt += `
-Ini adalah percakapan pertama lu dengan user ini.
-Awali jawaban dengan "aloooo".
-Setelah itu langsung jawab pesan user.
-Jangan gunakan "aloooo" lagi pada percakapan berikutnya.
-`;
-      }
-
-      // =========================
-      // TYPING
-      // =========================
-
-      await message.channel.sendTyping();
-
-      // =========================
-      // GEMINI
-      // =========================
-
-      const answer =
-        await askGemini(
-          finalPrompt,
-          isDerrA,
-          isNelo,
-          isFemale
-        );
-
-      // =========================
-      // KIRIM JAWABAN
-      // =========================
-
-      if (answer.length <= 2000) {
-
-        await message.reply(
-          answer
-        );
-
-        return;
-      }
-
-      // =========================
-      // PECAH PESAN PANJANG
-      // =========================
-
-      const chunks =
-        answer.match(
-          /[\s\S]{1,1900}/g
-        );
-
-      for (const chunk of chunks) {
-
-        await message.channel.send(
-          chunk
-        );
-
-        await sleep(300);
-      }
-
-    } catch (err) {
-
-      console.error(
-        "❌ AI Error:",
-        err.message
-      );
-
-      await message.reply(
-        "AI lagi ngaco, coba lagi bentar 🫩"
-      ).catch(() => {});
-    }
-  }
-);
-
-// =========================
 // LOGIN
 // =========================
 
 console.log(
-  "🚀 Cels sedang dinyalakan..."
+  "🚀 Aeden sedang dinyalakan..."
 );
 
 client.login(TOKEN)
   .then(() => {
+
     console.log(
       "🔐 Login Discord berhasil diproses."
     );
+
   })
   .catch(err => {
+
     console.error(
       "❌ Gagal login Discord:",
       err.message
     );
+
   });
+```
