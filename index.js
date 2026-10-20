@@ -30,6 +30,21 @@ if (!TOKEN || !GUILD_ID || !CHANNEL_ID) {
 
 let connection = null;
 let reconnecting = false;
+let reconnectTimer = null;
+
+function scheduleReconnect(delay = 10000) {
+  if (reconnectTimer) {
+    return;
+  }
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+
+    console.log("Mencoba reconnect VC...");
+
+    connectToVC();
+  }, delay);
+}
 
 async function connectToVC() {
   if (reconnecting) {
@@ -74,8 +89,11 @@ async function connectToVC() {
 
     if (connection) {
       try {
+        connection.removeAllListeners();
         connection.destroy();
       } catch (error) {}
+
+      connection = null;
     }
 
     connection = joinVoiceChannel({
@@ -86,17 +104,23 @@ async function connectToVC() {
       selfMute: false
     });
 
-    await entersState(
-      connection,
-      VoiceConnectionStatus.Ready,
-      60000
-    );
+    // Tangani error voice supaya proses Node tidak crash
+    connection.on("error", (error) => {
+      console.error(
+        "Voice connection error:",
+        error.message
+      );
 
-    console.log(
-      "Bot berhasil masuk VC."
-    );
+      reconnecting = false;
 
-    reconnecting = false;
+      try {
+        connection.destroy();
+      } catch (error) {}
+
+      connection = null;
+
+      scheduleReconnect(10000);
+    });
 
     connection.on(
       VoiceConnectionStatus.Disconnected,
@@ -107,13 +131,13 @@ async function connectToVC() {
 
         reconnecting = false;
 
-        setTimeout(() => {
-          console.log(
-            "Mencoba reconnect VC..."
-          );
+        try {
+          connection.destroy();
+        } catch (error) {}
 
-          connectToVC();
-        }, 5000);
+        connection = null;
+
+        scheduleReconnect(5000);
       }
     );
 
@@ -128,6 +152,18 @@ async function connectToVC() {
       }
     );
 
+    await entersState(
+      connection,
+      VoiceConnectionStatus.Ready,
+      60000
+    );
+
+    console.log(
+      "Bot berhasil masuk VC."
+    );
+
+    reconnecting = false;
+
   } catch (err) {
 
     console.error(
@@ -137,13 +173,15 @@ async function connectToVC() {
 
     reconnecting = false;
 
-    setTimeout(() => {
-      console.log(
-        "Mencoba masuk VC lagi..."
-      );
+    if (connection) {
+      try {
+        connection.destroy();
+      } catch (error) {}
 
-      connectToVC();
-    }, 10000);
+      connection = null;
+    }
+
+    scheduleReconnect(10000);
   }
 }
 
@@ -165,17 +203,13 @@ console.log(
 
 client.login(TOKEN)
   .then(() => {
-
     console.log(
       "Login Discord berhasil diproses."
     );
-
   })
-  .catch(err => {
-
+  .catch((err) => {
     console.error(
       "Gagal login Discord:",
       err.message
     );
-
   });
