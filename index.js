@@ -10,6 +10,10 @@ const {
   VoiceConnectionStatus
 } = require("@discordjs/voice");
 
+// =========================
+// DISCORD CLIENT
+// =========================
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -17,41 +21,89 @@ const client = new Client({
   ]
 });
 
+// =========================
+// ENVIRONMENT
+// =========================
+
 const TOKEN = process.env.TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 
 if (!TOKEN || !GUILD_ID || !CHANNEL_ID) {
-  console.error(
-    "ERROR: Ada environment variable yang belum dipasang."
-  );
+  console.error("ERROR: Environment variable belum lengkap.");
+
+  if (!TOKEN) {
+    console.error("TOKEN belum dipasang.");
+  }
+
+  if (!GUILD_ID) {
+    console.error("GUILD_ID belum dipasang.");
+  }
+
+  if (!CHANNEL_ID) {
+    console.error("CHANNEL_ID belum dipasang.");
+  }
+
   process.exit(1);
 }
 
-let connection = null;
-let reconnecting = false;
-let reconnectTimer = null;
+// =========================
+// VOICE STATE
+// =========================
 
-function scheduleReconnect(delay = 10000) {
+let connection = null;
+let reconnectTimer = null;
+let connecting = false;
+
+// =========================
+// RECONNECT
+// =========================
+
+function scheduleReconnect(delay) {
   if (reconnectTimer) {
     return;
   }
 
+  console.log(
+    "Reconnect VC dalam " + Math.round(delay / 1000) + " detik..."
+  );
+
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-
-    console.log("Mencoba reconnect VC...");
-
     connectToVC();
   }, delay);
 }
 
-async function connectToVC() {
-  if (reconnecting) {
+// =========================
+// CLEANUP CONNECTION
+// =========================
+
+function destroyConnection() {
+  if (!connection) {
     return;
   }
 
-  reconnecting = true;
+  try {
+    connection.removeAllListeners();
+  } catch (error) {}
+
+  try {
+    connection.destroy();
+  } catch (error) {}
+
+  connection = null;
+}
+
+// =========================
+// CONNECT TO VOICE CHANNEL
+// =========================
+
+async function connectToVC() {
+  if (connecting) {
+    return;
+  }
+
+  connecting = true;
 
   try {
     const guild = client.guilds.cache.get(GUILD_ID);
@@ -70,7 +122,7 @@ async function connectToVC() {
 
     if (!channel) {
       throw new Error(
-        "Channel tidak ditemukan."
+        "Channel tidak ditemukan: " + CHANNEL_ID
       );
     }
 
@@ -87,14 +139,10 @@ async function connectToVC() {
       );
     }
 
-    if (connection) {
-      try {
-        connection.removeAllListeners();
-        connection.destroy();
-      } catch (error) {}
+    // Bersihkan koneksi lama
+    destroyConnection();
 
-      connection = null;
-    }
+    console.log("Menghubungkan ke voice channel...");
 
     connection = joinVoiceChannel({
       channelId: channel.id,
@@ -104,23 +152,35 @@ async function connectToVC() {
       selfMute: false
     });
 
-    // Tangani error voice supaya proses Node tidak crash
+    // =========================
+    // VOICE ERROR
+    // =========================
+
     connection.on("error", (error) => {
       console.error(
         "Voice connection error:",
         error.message
       );
 
-      reconnecting = false;
+      connecting = false;
 
-      try {
-        connection.destroy();
-      } catch (error) {}
-
-      connection = null;
+      destroyConnection();
 
       scheduleReconnect(10000);
     });
+
+    // =========================
+    // VOICE STATE
+    // =========================
+
+    connection.on(
+      VoiceConnectionStatus.Ready,
+      () => {
+        console.log(
+          "Voice connection READY."
+        );
+      }
+    );
 
     connection.on(
       VoiceConnectionStatus.Disconnected,
@@ -129,13 +189,9 @@ async function connectToVC() {
           "Bot terputus dari VC."
         );
 
-        reconnecting = false;
+        connecting = false;
 
-        try {
-          connection.destroy();
-        } catch (error) {}
-
-        connection = null;
+        destroyConnection();
 
         scheduleReconnect(5000);
       }
@@ -148,54 +204,128 @@ async function connectToVC() {
           "Voice connection destroyed."
         );
 
-        reconnecting = false;
+        connecting = false;
       }
     );
+
+    // =========================
+    // WAIT READY
+    // =========================
 
     await entersState(
       connection,
       VoiceConnectionStatus.Ready,
-      60000
+      120000
     );
 
     console.log(
-      "Bot berhasil masuk VC."
+      "================================="
     );
 
-    reconnecting = false;
+    console.log(
+      "BOT BERHASIL MASUK VC"
+    );
 
-  } catch (err) {
+    console.log(
+      "Server : " + guild.name
+    );
+
+    console.log(
+      "Channel: " + channel.name
+    );
+
+    console.log(
+      "================================="
+    );
+
+    connecting = false;
+
+  } catch (error) {
 
     console.error(
       "Gagal masuk VC:",
-      err.message
+      error.message
     );
 
-    reconnecting = false;
+    connecting = false;
 
-    if (connection) {
-      try {
-        connection.destroy();
-      } catch (error) {}
-
-      connection = null;
-    }
+    destroyConnection();
 
     scheduleReconnect(10000);
   }
 }
+
+// =========================
+// DISCORD READY
+// =========================
 
 client.once(
   "clientReady",
   async () => {
 
     console.log(
+      "================================="
+    );
+
+    console.log(
       "Login sebagai " + client.user.tag
+    );
+
+    console.log(
+      "Discord client READY."
+    );
+
+    console.log(
+      "================================="
     );
 
     await connectToVC();
   }
 );
+
+// =========================
+// CLIENT ERROR
+// =========================
+
+client.on("error", (error) => {
+  console.error(
+    "Discord client error:",
+    error.message
+  );
+});
+
+// =========================
+// WARN
+// =========================
+
+client.on("warn", (message) => {
+  console.warn(
+    "Discord warning:",
+    message
+  );
+});
+
+// =========================
+// PROCESS ERROR PROTECTION
+// =========================
+
+process.on("unhandledRejection", (error) => {
+  console.error(
+    "Unhandled rejection:",
+    error
+  );
+});
+
+process.on("uncaughtException", (error) => {
+  console.error(
+    "Uncaught exception:",
+    error
+  );
+});
+
+// =========================
+// START
+// =========================
 
 console.log(
   "Aeden sedang dinyalakan..."
@@ -207,9 +337,9 @@ client.login(TOKEN)
       "Login Discord berhasil diproses."
     );
   })
-  .catch((err) => {
+  .catch((error) => {
     console.error(
       "Gagal login Discord:",
-      err.message
+      error.message
     );
   });
