@@ -1,4 +1,4 @@
-```js
+```javascript
 const {
   Client,
   GatewayIntentBits,
@@ -32,7 +32,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID;
 
 if (!TOKEN || !GUILD_ID || !CHANNEL_ID) {
   console.error(
-    "❌ Ada environment variable yang belum dipasang."
+    "ERROR: Ada environment variable yang belum dipasang."
   );
 
   process.exit(1);
@@ -57,23 +57,19 @@ async function connectToVC() {
   reconnecting = true;
 
   try {
-    const guild =
-      client.guilds.cache.get(GUILD_ID);
+    const guild = client.guilds.cache.get(GUILD_ID);
 
     if (!guild) {
       throw new Error(
-        `Guild tidak ditemukan: ${GUILD_ID}`
+        "Guild tidak ditemukan: " + GUILD_ID
       );
     }
 
     console.log(
-      `✅ Server ditemukan: ${guild.name}`
+      "Server ditemukan: " + guild.name
     );
 
-    const channel =
-      await client.channels.fetch(
-        CHANNEL_ID
-      );
+    const channel = await client.channels.fetch(CHANNEL_ID);
 
     if (!channel) {
       throw new Error(
@@ -82,7 +78,7 @@ async function connectToVC() {
     }
 
     console.log(
-      `✅ Channel ditemukan: ${channel.name}`
+      "Channel ditemukan: " + channel.name
     );
 
     if (
@@ -94,24 +90,23 @@ async function connectToVC() {
       );
     }
 
-    // Hancurkan koneksi lama kalau masih ada
+    // Hancurkan koneksi lama jika masih ada
     if (connection) {
       try {
         connection.destroy();
-      } catch {}
+      } catch (error) {}
     }
 
     // Masuk ke voice channel
     connection = joinVoiceChannel({
       channelId: channel.id,
       guildId: guild.id,
-      adapterCreator:
-        guild.voiceAdapterCreator,
+      adapterCreator: guild.voiceAdapterCreator,
       selfDeaf: false,
       selfMute: false
     });
 
-    // Tunggu sampai benar-benar Ready
+    // Tunggu sampai koneksi Ready
     await entersState(
       connection,
       VoiceConnectionStatus.Ready,
@@ -119,7 +114,7 @@ async function connectToVC() {
     );
 
     console.log(
-      "✅ Bot berhasil masuk VC."
+      "Bot berhasil masuk VC."
     );
 
     reconnecting = false;
@@ -132,14 +127,14 @@ async function connectToVC() {
       VoiceConnectionStatus.Disconnected,
       () => {
         console.log(
-          "⚠️ Bot terputus dari VC."
+          "Bot terputus dari VC."
         );
 
         reconnecting = false;
 
         setTimeout(() => {
           console.log(
-            "🔄 Mencoba reconnect VC..."
+            "Mencoba reconnect VC..."
           );
 
           connectToVC();
@@ -155,7 +150,7 @@ async function connectToVC() {
       VoiceConnectionStatus.Destroyed,
       () => {
         console.log(
-          "⚠️ Voice connection destroyed."
+          "Voice connection destroyed."
         );
 
         reconnecting = false;
@@ -165,7 +160,7 @@ async function connectToVC() {
   } catch (err) {
 
     console.error(
-      "❌ Gagal masuk VC:",
+      "Gagal masuk VC:",
       err.message
     );
 
@@ -173,7 +168,7 @@ async function connectToVC() {
 
     setTimeout(() => {
       console.log(
-        "🔄 Mencoba masuk VC lagi..."
+        "Mencoba masuk VC lagi..."
       );
 
       connectToVC();
@@ -190,7 +185,7 @@ client.once(
   async () => {
 
     console.log(
-      `✅ Login sebagai ${client.user.tag}`
+      "Login sebagai " + client.user.tag
     );
 
     await connectToVC();
@@ -202,21 +197,21 @@ client.once(
 // =========================
 
 console.log(
-  "🚀 Aeden sedang dinyalakan..."
+  "Aeden sedang dinyalakan..."
 );
 
 client.login(TOKEN)
   .then(() => {
 
     console.log(
-      "🔐 Login Discord berhasil diproses."
+      "Login Discord berhasil diproses."
     );
 
   })
   .catch(err => {
 
     console.error(
-      "❌ Gagal login Discord:",
+      "Gagal login Discord:",
       err.message
     );
 
