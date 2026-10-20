@@ -1,4 +1,3 @@
-```javascript
 const {
   Client,
   GatewayIntentBits,
@@ -11,20 +10,12 @@ const {
   VoiceConnectionStatus
 } = require("@discordjs/voice");
 
-// =========================
-// DISCORD CLIENT
-// =========================
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildVoiceStates
   ]
 });
-
-// =========================
-// ENVIRONMENT
-// =========================
 
 const TOKEN = process.env.TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
@@ -34,20 +25,11 @@ if (!TOKEN || !GUILD_ID || !CHANNEL_ID) {
   console.error(
     "ERROR: Ada environment variable yang belum dipasang."
   );
-
   process.exit(1);
 }
 
-// =========================
-// VOICE CONNECTION
-// =========================
-
 let connection = null;
 let reconnecting = false;
-
-// =========================
-// CONNECT TO VC
-// =========================
 
 async function connectToVC() {
   if (reconnecting) {
@@ -90,14 +72,12 @@ async function connectToVC() {
       );
     }
 
-    // Hancurkan koneksi lama jika masih ada
     if (connection) {
       try {
         connection.destroy();
       } catch (error) {}
     }
 
-    // Masuk ke voice channel
     connection = joinVoiceChannel({
       channelId: channel.id,
       guildId: guild.id,
@@ -106,7 +86,6 @@ async function connectToVC() {
       selfMute: false
     });
 
-    // Tunggu sampai koneksi Ready
     await entersState(
       connection,
       VoiceConnectionStatus.Ready,
@@ -118,10 +97,6 @@ async function connectToVC() {
     );
 
     reconnecting = false;
-
-    // =========================
-    // DISCONNECTED
-    // =========================
 
     connection.on(
       VoiceConnectionStatus.Disconnected,
@@ -141,10 +116,6 @@ async function connectToVC() {
         }, 5000);
       }
     );
-
-    // =========================
-    // DESTROYED
-    // =========================
 
     connection.on(
       VoiceConnectionStatus.Destroyed,
@@ -176,10 +147,6 @@ async function connectToVC() {
   }
 }
 
-// =========================
-// READY
-// =========================
-
 client.once(
   "clientReady",
   async () => {
@@ -191,10 +158,6 @@ client.once(
     await connectToVC();
   }
 );
-
-// =========================
-// LOGIN
-// =========================
 
 console.log(
   "Aeden sedang dinyalakan..."
@@ -216,4 +179,3 @@ client.login(TOKEN)
     );
 
   });
-```
